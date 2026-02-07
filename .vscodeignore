@@ -1,0 +1,14 @@
+.vscode-test/
+.vscode/**
+.vscode-test-web/**
+src/**
+tsconfig.json
+.gitignore
+.yarnrc
+vsc-extension-quickstart.md
+**/tsconfig.json
+node_modules/**
+*.vsix
+.DS_Store
+.debugforce/**
+IMPLEMENTATION_NOTES.md

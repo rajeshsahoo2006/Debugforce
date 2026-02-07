@@ -1,0 +1,135 @@
+{
+  "name": "debugforce",
+  "displayName": "Debugforce",
+  "description": "Salesforce debug logging extension for VS Code/Cursor",
+  "version": "0.1.0",
+  "publisher": "debugforce",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/debugforce.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "debugforce.setupDebugLogging",
+        "title": "Debugforce: Setup Debug Logging (30 min)"
+      },
+      {
+        "command": "debugforce.fetchLogs",
+        "title": "Debugforce: Fetch Logs (Last N Minutes)"
+      },
+      {
+        "command": "debugforce.downloadLog",
+        "title": "Debugforce: Download Log & Create Analysis Packet"
+      },
+      {
+        "command": "debugforce.cleanupTraceFlags",
+        "title": "Debugforce: Cleanup Trace Flags"
+      },
+      {
+        "command": "debugforce.runDiagnostics",
+        "title": "Debugforce: Run Diagnostics"
+      },
+      {
+        "command": "debugforce.testQuery",
+        "title": "Debugforce: Test SOQL Query"
+      },
+      {
+        "command": "debugforce.showControlPanel",
+        "title": "Debugforce: Show Control Panel"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "debugforceLogs",
+          "name": "Debugforce Logs",
+          "when": "true"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Debugforce",
+      "properties": {
+        "debugforce.timeWindowMinutes": {
+          "type": "number",
+          "default": 30,
+          "description": "Time window in minutes for fetching logs"
+        },
+        "debugforce.maxLogs": {
+          "type": "number",
+          "default": 50,
+          "description": "Maximum number of logs to fetch"
+        },
+        "debugforce.traceMinutes": {
+          "type": "number",
+          "default": 30,
+          "description": "Duration in minutes for trace flags"
+        },
+        "debugforce.outputFolder": {
+          "type": "string",
+          "default": ".debugforce/analysis",
+          "description": "Output folder for analysis packets (relative to workspace root)"
+        },
+        "debugforce.rawLogsFolder": {
+          "type": "string",
+          "default": ".debugforce/logs",
+          "description": "Output folder for raw log files (relative to workspace root)"
+        },
+        "debugforce.truncateRawLogBytes": {
+          "type": "number",
+          "default": 1500000,
+          "description": "Maximum bytes for raw log content in analysis packet (~1.5MB)"
+        }
+      }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "debugforce.fetchLogs",
+          "when": "view == debugforceLogs",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "debugforce.downloadLog",
+          "when": "view == debugforceLogs",
+          "group": "inline"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "debugforce.fetchLogs",
+          "when": "view == debugforceLogs",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "build": "npm run compile",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^2.22.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {}
+}
