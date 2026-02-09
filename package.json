@@ -48,6 +48,10 @@
       {
         "command": "debugforce.showControlPanel",
         "title": "Debugforce: Show Control Panel"
+      },
+      {
+        "command": "debugforce.analyzeWithGemini",
+        "title": "Debugforce: Analyze All Logs with Gemini"
       }
     ],
     "views": {
@@ -86,6 +90,21 @@
           "type": "string",
           "default": ".debugforce/logs",
           "description": "Output folder for raw log files (relative to workspace root)"
+        },
+        "debugforce.useGemini": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Google Gemini API for log analysis (requires API key)"
+        },
+        "debugforce.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API key (required if useGemini is enabled)"
+        },
+        "debugforce.enableAutoFetch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically fetch and analyze logs in the background after setting up debug logging"
         },
         "debugforce.truncateRawLogBytes": {
           "type": "number",

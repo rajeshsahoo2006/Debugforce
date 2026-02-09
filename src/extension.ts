@@ -10,12 +10,18 @@ import { downloadRawLog } from './rawLogDownload';
 import { setupDebugLogging, cleanupTraceFlags, setOutputChannel } from './traceFlags';
 import { runDiagnostics } from './diagnostics';
 import { DebugforceWebviewPanel } from './webviewPanel';
+import { analyzeLogsWithGemini } from './geminiAnalyzer';
+import { startBackgroundTask, stopBackgroundTask, resumeBackgroundTaskIfNeeded, isBackgroundTaskRunning } from './backgroundTask';
 
 let logTreeProvider: LogTreeDataProvider;
 let logTreeView: vscode.TreeView<LogTreeItem>;
 let outputChannel: vscode.OutputChannel;
+let extensionContext: vscode.ExtensionContext | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+    // Store context for background task access
+    extensionContext = context;
+    
     // Create output channel for logging
     outputChannel = vscode.window.createOutputChannel('Debugforce');
     outputChannel.appendLine('Debugforce extension activated');
@@ -121,16 +127,30 @@ export function activate(context: vscode.ExtensionContext) {
         }),
         vscode.commands.registerCommand('debugforce.showControlPanel', () => {
             DebugforceWebviewPanel.createOrShow(logTreeProvider);
+        }),
+        vscode.commands.registerCommand('debugforce.analyzeWithGemini', async () => {
+            await handleAnalyzeWithGemini();
         })
     ];
 
     context.subscriptions.push(...commands, statusBarItem);
+
+    // Resume background task if it was running before extension reload
+    resumeBackgroundTaskIfNeeded(context, outputChannel, logTreeProvider);
+
+    // Clean up background task on deactivation
+    context.subscriptions.push({
+        dispose: () => {
+            stopBackgroundTask();
+        }
+    });
 }
 
 async function handleSetupDebugLogging() {
     try {
         const config = vscode.workspace.getConfiguration('debugforce');
         const traceMinutes = config.get<number>('traceMinutes', 30);
+        const enableAutoFetch = config.get<boolean>('enableAutoFetch', true);
         
         await vscode.window.withProgress(
             {
@@ -145,6 +165,20 @@ async function handleSetupDebugLogging() {
                     outputChannel.appendLine(`Trace duration: ${traceMinutes} minutes`);
                     await setupDebugLogging(userId, traceMinutes);
                     outputChannel.appendLine('✓ Debug logging setup completed successfully');
+                    
+                    // Start background task if enabled
+                    if (enableAutoFetch && extensionContext) {
+                        startBackgroundTask(extensionContext, outputChannel, logTreeProvider, traceMinutes);
+                        outputChannel.appendLine('✓ Background automatic log fetching started');
+                        vscode.window.showInformationMessage(
+                            `Debugforce: Debug logging active. Auto-fetching logs every 2 minutes.`,
+                            'View Logs'
+                        ).then(selection => {
+                            if (selection === 'View Logs') {
+                                outputChannel.show();
+                            }
+                        });
+                    }
                 } catch (error) {
                     outputChannel.appendLine(`✗ Error: ${error instanceof Error ? error.message : String(error)}`);
                     throw error;
@@ -342,12 +376,112 @@ async function handleDownloadLog(item: LogTreeItem) {
 }
 
 async function handleCleanupTraceFlags() {
+    // Stop background task when cleaning up
+    if (isBackgroundTaskRunning()) {
+        stopBackgroundTask();
+        outputChannel.appendLine('✓ Background task stopped');
+    }
     try {
         const userId = await getSFCLILoggedInUserId();
         await cleanupTraceFlags(userId);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         vscode.window.showErrorMessage(`Debugforce: Failed to cleanup trace flags: ${message}`);
+    }
+}
+
+async function handleAnalyzeWithGemini() {
+    try {
+        const config = vscode.workspace.getConfiguration('debugforce');
+        const useGemini = config.get<boolean>('useGemini', false);
+        const apiKey = config.get<string>('geminiApiKey', '');
+        const rawLogsFolder = config.get<string>('rawLogsFolder', '.debugforce/logs');
+
+        if (!useGemini) {
+            const action = await vscode.window.showWarningMessage(
+                'Gemini analysis is disabled. Enable it in settings: debugforce.useGemini',
+                'Open Settings',
+                'View Setup Guide'
+            );
+            if (action === 'Open Settings') {
+                vscode.commands.executeCommand('workbench.action.openSettings', 'debugforce.useGemini');
+            } else if (action === 'View Setup Guide') {
+                const guidePath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders?.[0]?.uri || vscode.Uri.file('.'), 'GEMINI_SETUP.md');
+                vscode.workspace.openTextDocument(guidePath).then(
+                    doc => {
+                        vscode.window.showTextDocument(doc);
+                    },
+                    () => {
+                        vscode.window.showInformationMessage('See GEMINI_SETUP.md in the extension folder for setup instructions.');
+                    }
+                );
+            }
+            return;
+        }
+
+        if (!apiKey || apiKey.trim() === '') {
+            const action = await vscode.window.showErrorMessage(
+                'Gemini API key is required. Set it in settings: debugforce.geminiApiKey',
+                'Open Settings',
+                'Get API Key'
+            );
+            if (action === 'Open Settings') {
+                vscode.commands.executeCommand('workbench.action.openSettings', 'debugforce.geminiApiKey');
+            } else if (action === 'Get API Key') {
+                vscode.env.openExternal(vscode.Uri.parse('https://makersuite.google.com/app/apikey')).then(() => {}, () => {});
+            }
+            return;
+        }
+
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: 'Debugforce: Analyzing logs with Gemini...',
+                cancellable: false
+            },
+            async () => {
+                outputChannel.appendLine('=== Gemini Analysis ===');
+                outputChannel.show();
+
+                try {
+                    const summary = await analyzeLogsWithGemini(rawLogsFolder, apiKey);
+                    
+                    // Create summary document
+                    const workspaceFolders = vscode.workspace.workspaceFolders;
+                    if (workspaceFolders && workspaceFolders.length > 0) {
+                        const workspaceRoot = workspaceFolders[0].uri.fsPath;
+                        const summaryPath = path.join(workspaceRoot, '.debugforce/analysis', `gemini_summary_${Date.now()}.md`);
+                        
+                        const summaryContent = `# Gemini Analysis Summary
+
+Generated: ${new Date().toISOString()}
+
+---
+
+${summary}
+`;
+
+                        await fs.promises.mkdir(path.dirname(summaryPath), { recursive: true });
+                        await fs.promises.writeFile(summaryPath, summaryContent, 'utf-8');
+
+                        // Open the summary
+                        const document = await vscode.workspace.openTextDocument(summaryPath);
+                        await vscode.window.showTextDocument(document);
+
+                        outputChannel.appendLine(`✓ Gemini analysis complete: ${summaryPath}`);
+                        vscode.window.showInformationMessage('Debugforce: Gemini analysis complete');
+                    }
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    outputChannel.appendLine(`✗ Gemini analysis failed: ${errorMessage}`);
+                    outputChannel.show();
+                    throw error;
+                }
+            }
+        );
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`Debugforce: Gemini analysis failed: ${message}`);
     }
 }
 

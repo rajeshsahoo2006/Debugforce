@@ -141,6 +141,9 @@ export class DebugforceWebviewPanel {
                         await vscode.commands.executeCommand('debugforce.cleanupTraceFlags');
                         this._update();
                         break;
+                    case 'analyzeWithGemini':
+                        await vscode.commands.executeCommand('debugforce.analyzeWithGemini');
+                        break;
                 }
             },
             null,
@@ -623,6 +626,11 @@ export class DebugforceWebviewPanel {
                         <button class="btn-primary" onclick="fetchLogs()">
                             📥 Fetch Logs
                         </button>
+                        <div style="margin-top: 10px;">
+                            <button class="btn-secondary" onclick="analyzeWithGemini()">
+                                🤖 Analyze All Logs with Gemini
+                            </button>
+                        </div>
                         <div class="status-message" id="step2-status"></div>
                     </div>
 
@@ -726,6 +734,10 @@ export class DebugforceWebviewPanel {
                     function clearSelection() {
                         document.querySelectorAll('.log-checkbox').forEach(cb => cb.checked = false);
                         updateSelection();
+                    }
+                    
+                    function analyzeWithGemini() {
+                        vscode.postMessage({ command: 'analyzeWithGemini' });
                     }
                     
                     function analyzeSelectedLogs() {
