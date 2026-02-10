@@ -16,7 +16,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onCommand:debugforce.showControlPanel"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -50,8 +51,8 @@
         "title": "Debugforce: Show Control Panel"
       },
       {
-        "command": "debugforce.analyzeWithGemini",
-        "title": "Debugforce: Analyze All Logs with Gemini"
+        "command": "debugforce.analyzeWithAgentforce",
+        "title": "Debugforce: Analyze All Logs"
       }
     ],
     "views": {
@@ -90,16 +91,6 @@
           "type": "string",
           "default": ".debugforce/logs",
           "description": "Output folder for raw log files (relative to workspace root)"
-        },
-        "debugforce.useGemini": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use Google Gemini API for log analysis (requires API key)"
-        },
-        "debugforce.geminiApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Google Gemini API key (required if useGemini is enabled)"
         },
         "debugforce.enableAutoFetch": {
           "type": "boolean",
@@ -144,9 +135,6 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "google-auth-library": "^9.0.0"
-  },
-  "overrides": {
-    "undici": "^5.0.0"
+    "encoding": "^0.1.13"
   }
 }

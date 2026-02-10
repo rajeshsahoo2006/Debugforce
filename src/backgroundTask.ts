@@ -1,11 +1,9 @@
 import * as vscode from 'vscode';
 import { fetchLogs } from './logQuery';
-import { analyzeLogsWithGemini } from './geminiAnalyzer';
 import { downloadRawLog } from './rawLogDownload';
 import { getCurrentUser } from './userContext';
 import * as path from 'path';
 import * as fs from 'fs';
-import { GoogleAuthManager } from './googleAuth';
 
 let backgroundInterval: NodeJS.Timeout | undefined;
 let setupTimestamp: number | undefined;
@@ -14,7 +12,7 @@ let traceDurationMinutes: number = 30;
 const BACKGROUND_FETCH_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 
 /**
- * Start background automatic log fetching and Gemini analysis
+ * Start background automatic log fetching
  */
 export function startBackgroundTask(
     context: vscode.ExtensionContext,
@@ -90,8 +88,6 @@ async function performBackgroundFetch(
         }
 
         const config = vscode.workspace.getConfiguration('debugforce');
-        const useGemini = config.get<boolean>('useGemini', false);
-        const geminiApiKey = config.get<string>('geminiApiKey', '');
         const timeWindowMinutes = config.get<number>('timeWindowMinutes', 30);
         const maxLogs = config.get<number>('maxLogs', 50);
         const rawLogsFolder = config.get<string>('rawLogsFolder', '.debugforce/logs');
@@ -152,57 +148,16 @@ async function performBackgroundFetch(
             logTreeProvider.refresh(logs);
         }
 
-        // Auto-analyze with Gemini if enabled
-        const authManager = GoogleAuthManager.getInstance(context, outputChannel);
-        const accessToken = await authManager.getAccessToken();
-
-        if (useGemini && (geminiApiKey || accessToken)) {
-            try {
-                outputChannel.appendLine(`[Background] Analyzing logs with Gemini...`);
-                // Using 'as any' to bypass the strict type check if needed, or better, ensure the type matches
-                // The analyzeLogsWithGemini function was updated to accept { apiKey?: string; accessToken?: string }
-                // which is compatible with the object we are creating here.
-                const auth = { apiKey: geminiApiKey, accessToken: accessToken };
-                const summary = await analyzeLogsWithGemini(rawLogsFolder, auth);
-                
-                // Save summary
-                const summaryPath = path.join(workspaceRoot, '.debugforce/analysis', `gemini_auto_${Date.now()}.md`);
-                await fs.promises.mkdir(path.dirname(summaryPath), { recursive: true });
-                
-                const summaryContent = `# Gemini Auto-Analysis Summary
-
-Generated: ${new Date().toISOString()}
-Logs Analyzed: ${logs.length}
-New Logs Downloaded: ${downloadedCount}
-
----
-
-${summary}
-`;
-
-                await fs.promises.writeFile(summaryPath, summaryContent, 'utf-8');
-                outputChannel.appendLine(`[Background] ✓ Gemini analysis saved: ${summaryPath}`);
-                
-                // Show notification
-                vscode.window.showInformationMessage(
-                    `Debugforce: Analyzed ${logs.length} log(s) with Gemini. Summary saved.`,
-                    'Open Summary'
-                ).then(selection => {
-                    if (selection === 'Open Summary') {
-                        vscode.workspace.openTextDocument(summaryPath).then(doc => {
-                            vscode.window.showTextDocument(doc);
-                        });
-                    }
-                });
-            } catch (error) {
-                outputChannel.appendLine(`[Background] Gemini analysis failed: ${error instanceof Error ? error.message : String(error)}`);
-            }
-        } else {
-            if (!useGemini) {
-                outputChannel.appendLine(`[Background] Gemini analysis skipped (not enabled in settings)`);
-            } else if (!geminiApiKey || geminiApiKey.trim() === '') {
-                outputChannel.appendLine(`[Background] Gemini analysis skipped (API key not configured)`);
-            }
+        // Show notification if new logs were downloaded
+        if (downloadedCount > 0) {
+            vscode.window.showInformationMessage(
+                `Debugforce: Downloaded ${downloadedCount} new log(s). Use "Analyze All Logs" to review.`,
+                'Analyze Now'
+            ).then(selection => {
+                if (selection === 'Analyze Now') {
+                    vscode.commands.executeCommand('debugforce.analyzeWithAgentforce');
+                }
+            });
         }
 
     } catch (error) {

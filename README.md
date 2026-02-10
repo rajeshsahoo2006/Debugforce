@@ -1,17 +1,18 @@
-# Debugforce
+# Debugforce - Agentforce Edition
 
-A VS Code/Cursor extension for Salesforce debug logging that enables debug logging for the currently authenticated Salesforce CLI user, fetches only that user's Apex logs from the last N minutes, downloads selected logs, and generates structured "analysis packet" markdown files for Cursor's default AI to analyze.
+A VS Code/Cursor extension for Salesforce debug logging that enables debug logging for the currently authenticated Salesforce CLI user, fetches only that user's Apex logs from the last N minutes, downloads selected logs, and intelligently analyzes them with **Agentforce-powered error detection**.
 
-## Features
+## 🌟 Features
 
-- **Gemini AI Analysis**: Analyze logs intelligently using Google's Gemini AI (via API Key or Google Login)
-- **Premium UI**: Modern, glassmorphism-style Control Panel for managing logs
-- **Setup Debug Logging**: Automatically creates TraceFlags and DebugLevels for the logged-in user
-- **Fetch Logs**: Queries Apex logs using Salesforce MCP (with CLI fallback) filtered by the authenticated user
-- **Download & Analyze**: Downloads selected logs and generates markdown analysis packets
-- **Cleanup**: Removes trace flags when done debugging
-- **Tree View**: Visual log browser in the Explorer sidebar
-- **Status Bar Integration**: Quick access via status bar button
+- **🔍 Smart Error Detection**: Automatically identifies and highlights only files with errors and exceptions
+- **⚡ Agentforce Analysis**: Local, fast analysis that focuses on actionable insights
+- **🎨 Modern UI**: Glassmorphism-style Control Panel for managing logs
+- **⚙️ Auto Setup**: Automatically creates TraceFlags and DebugLevels for the logged-in user
+- **📥 Smart Fetch**: Queries Apex logs using Salesforce MCP (with CLI fallback) filtered by the authenticated user
+- **📊 Intelligent Reports**: Downloads selected logs and generates focused analysis reports
+- **🧹 Auto Cleanup**: Removes trace flags when done debugging
+- **🌲 Tree View**: Visual log browser in the Explorer sidebar
+- **🚀 Quick Access**: Status bar integration for instant access
 
 ## Prerequisites
 
@@ -26,7 +27,7 @@ A VS Code/Cursor extension for Salesforce debug logging that enables debug loggi
 3. Run `npm install`
 4. Press `F5` to launch extension development host, or package with `vsce package` and install the `.vsix` file
 
-## Configuration
+## ⚙️ Configuration
 
 ### Extension Settings
 
@@ -38,25 +39,21 @@ Add these settings to your `settings.json`:
   "debugforce.maxLogs": 50,
   "debugforce.traceMinutes": 30,
   "debugforce.outputFolder": ".debugforce/analysis",
+  "debugforce.rawLogsFolder": ".debugforce/logs",
   "debugforce.truncateRawLogBytes": 1500000,
-  "debugforce.useGemini": true,
-  "debugforce.geminiApiKey": "YOUR_API_KEY", // Optional if using Google Login
-  "debugforce.googleClientId": "YOUR_OAUTH_CLIENT_ID", // Required for Google Login
-  "debugforce.googleClientSecret": "YOUR_OAUTH_CLIENT_SECRET" // Required for Google Login
+  "debugforce.enableAutoFetch": true
 }
 ```
 
-### Google Cloud Setup (For OAuth)
+### Settings Explained
 
-To use the "Connect with Google" feature for Gemini:
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project.
-3. Enable the **Generative Language API**.
-4. Configure **OAuth Consent Screen** (User Type: External, Testing).
-5. Create **Credentials** > **OAuth Client ID** (Application type: Web application).
-   - **Authorized redirect URIs**: `http://localhost:3000/oauth2callback`
-6. Copy the Client ID and Client Secret to your VS Code settings as shown above.
+- **timeWindowMinutes**: How far back to look for logs (default: 30)
+- **maxLogs**: Maximum number of logs to fetch (default: 50)
+- **traceMinutes**: Duration for trace flags (default: 30)
+- **outputFolder**: Where to save analysis reports (default: .debugforce/analysis)
+- **rawLogsFolder**: Where to save raw log files (default: .debugforce/logs)
+- **truncateRawLogBytes**: Max size for raw logs in analysis (~1.5MB)
+- **enableAutoFetch**: Auto-fetch logs every 2 minutes after setup (default: true)
 
 ## Salesforce MCP Configuration
 
@@ -110,24 +107,30 @@ Perform actions in your Salesforce org that you want to debug (run flows, execut
 
 The analysis packet includes:
 
-- Header with org/user information
-- Cursor prompt for AI analysis
-- Key extracts (exceptions, limits, SOQL, DML, etc.)
-- Raw log content (truncated if too large)
+- **Header**: Org/user information and context
+- **Smart Cursor Prompt**: Instructs AI to focus only on errors
+- **Key Extracts**: Prioritized error lines (exceptions, limits, SOQL, DML, flows)
+- **Raw Log**: Full log content (truncated if too large)
+- **Error Focus**: Automatically filters out clean sections
 
-### Step 5: Gemini Analysis (New!)
+### Step 5: Agentforce Analysis
 
-1. **Connect**: Click **"Connect with Google"** in the Control Panel (requires OAuth config).
-2. **Analyze**: Select logs and click **"✨ Analyze Selected Logs"**.
-3. **Review**: The extension sends the logs to Gemini and displays a summarized root cause analysis and solution suggestions.
+1. **Analyze Individual Logs**: Select specific logs and click **"✨ Analyze Selected Logs (Local)"** for targeted analysis
+2. **Analyze All**: Click **"🔍 Analyze All Logs"** to scan all downloaded logs at once
+3. **Review Results**: The extension analyzes logs locally and displays:
+   - **Error Summary**: Count and types of errors found
+   - **Exception Details**: Specific error messages and context
+   - **Root Cause Analysis**: Technical explanation of what went wrong
+   - **Recommended Solutions**: Actionable fixes and documentation links
+4. **Focus on Errors**: Clean logs (without errors) are automatically ignored to save time
 
 ### Step 6: Cleanup (Optional)
 
 When done debugging, run: **Debugforce: Cleanup Trace Flags** to remove trace flags.
 
-## How It Works
+## 🔧 How It Works
 
-### Data Security Rule
+### 🔒 Data Security Rule
 
 **Debugforce only fetches logs where `ApexLog.LogUserId = SFCLILoggedInUserId`**
 
@@ -138,17 +141,28 @@ The extension:
 3. Performs defensive checks to discard any mismatched records
 4. Never allows user input for LogUserId
 
-### Architecture
+### 🏗️ Architecture
 
 - **sfCli.ts**: Wraps Salesforce CLI commands using `spawn` (not `exec`) for safety
 - **mcp.ts**: Integrates with Salesforce MCP for SOQL queries (falls back to CLI)
 - **userContext.ts**: Manages logged-in user info with caching
 - **logQuery.ts**: Builds SOQL queries and filters results
 - **logDownload.ts**: Downloads log files via CLI
-- **logParser.ts**: Extracts key lines from logs
-- **markdown.ts**: Generates analysis packets
+- **logParser.ts**: Intelligently extracts error lines and key events from logs
+- **localAnalyzer.ts**: **NEW!** Agentforce-powered local analysis engine
+- **markdown.ts**: Generates smart analysis packets with error-focused prompts
 - **treeView.ts**: Displays logs in VS Code tree view
 - **traceFlags.ts**: Manages TraceFlag and DebugLevel records
+- **webviewPanel.ts**: Modern Control Panel UI
+
+### 🎯 Agentforce Analysis Features
+
+1. **Error Detection**: Scans for exceptions, fatal errors, limit breaches, and flow errors
+2. **Smart Filtering**: Automatically ignores clean logs to save analysis time
+3. **Context Extraction**: Pulls relevant error context from logs
+4. **Root Cause Analysis**: Provides technical explanations for failures
+5. **Solution Suggestions**: Recommends specific fixes and documentation links
+6. **Local Processing**: Fast, privacy-friendly analysis without external API calls
 
 ## Troubleshooting
 

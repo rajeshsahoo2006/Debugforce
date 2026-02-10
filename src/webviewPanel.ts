@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 import { LogTreeDataProvider, LogTreeItem } from './treeView';
 import { ApexLogEntry } from './logQuery';
 
@@ -30,9 +32,6 @@ export class DebugforceWebviewPanel {
         this._panel.webview.onDidReceiveMessage(
             async (message) => {
                 switch (message.command) {
-                    case 'loginWithGoogle':
-                        await vscode.commands.executeCommand('debugforce.loginWithGoogle');
-                        break;
                     case 'setupDebugLogging':
                         await vscode.commands.executeCommand('debugforce.setupDebugLogging');
                         this._update();
@@ -122,8 +121,8 @@ export class DebugforceWebviewPanel {
                             );
                         }
                         break;
-                    case 'analyzeWithGemini':
-                        await vscode.commands.executeCommand('debugforce.analyzeWithGemini');
+                    case 'analyzeWithAgentforce':
+                        await vscode.commands.executeCommand('debugforce.analyzeWithAgentforce');
                         break;
                 }
             },
@@ -167,10 +166,31 @@ export class DebugforceWebviewPanel {
         }
     }
 
-    private _update() {
-        const logs = this.logTreeProvider.getLogs();
+    private async _update() {
+        const allLogs = this.logTreeProvider.getLogs();
+        const logs = await this._filterToLogsInFolder(allLogs);
         const webview = this._panel.webview;
         this._panel.webview.html = this._getHtmlForWebview(webview, logs, this.analysisResults);
+    }
+
+    /** Returns only logs that have a corresponding .log file in the logs folder */
+    private async _filterToLogsInFolder(allLogs: ApexLogEntry[]): Promise<ApexLogEntry[]> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            return allLogs;
+        }
+        const config = vscode.workspace.getConfiguration('debugforce');
+        const rawLogsFolder = config.get<string>('rawLogsFolder', '.debugforce/logs');
+        const logsDir = path.join(workspaceFolders[0].uri.fsPath, rawLogsFolder);
+        try {
+            const files = await fs.promises.readdir(logsDir);
+            const logIdsInFolder = new Set(
+                files.filter((f: string) => f.endsWith('.log')).map((f: string) => f.replace(/\.log$/, ''))
+            );
+            return allLogs.filter(log => logIdsInFolder.has(log.id));
+        } catch {
+            return allLogs;
+        }
     }
 
     private _getHtmlForWebview(webview: vscode.Webview, logs: ApexLogEntry[], analysisResults: AnalysisResult[]): string {
@@ -207,7 +227,10 @@ export class DebugforceWebviewPanel {
                 </div>
                 <div class="actions-bar">
                     <button class="btn-primary" id="btnAnalyze" onclick="analyzeSelectedLogs()" disabled>
-                        ✨ Analyze Selected Logs
+                        ✨ Analyze Selected Logs (Local)
+                    </button>
+                    <button class="btn-secondary" onclick="analyzeWithAgentforce()" style="margin-top: 8px;">
+                        🔍 Analyze All Logs
                     </button>
                 </div>
             `
@@ -474,24 +497,16 @@ export class DebugforceWebviewPanel {
             </head>
             <body>
                 <div class="container">
-                    <!-- Auth Card -->
+                    <!-- Header Card -->
                     <div class="card">
                         <div class="card-header">
-                            <h3 class="card-title">🔐 Authentication</h3>
-                            <span class="status-pill status-success" style="display:none;" id="authStatus">Connected</span>
+                            <h3 class="card-title">⚡ Debugforce - Agentforce Edition</h3>
+                            <span class="status-pill status-success">Ready</span>
                         </div>
-                        <p style="margin-bottom: 16px; font-size: 0.9rem; opacity: 0.8;">
-                            Connect with Google to enable advanced log analysis with Gemini.
+                        <p style="margin: 0; font-size: 0.95rem; opacity: 0.9;">
+                            Intelligent log analysis powered by local error detection. 
+                            Automatically identifies and highlights only files with errors and exceptions.
                         </p>
-                        <button class="btn-google" onclick="loginWithGoogle()">
-                            <svg width="18" height="18" viewBox="0 0 18 18">
-                                <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
-                                <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.715H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
-                                <path fill="#FBBC05" d="M3.964 10.71a5.41 5.41 0 0 1 0-3.42V4.958H.957a9.006 9.006 0 0 0 0 6.64l3.007-2.332z"/>
-                                <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
-                            </svg>
-                            Connect with Google
-                        </button>
                     </div>
 
                     <!-- Steps Card -->
@@ -537,10 +552,6 @@ export class DebugforceWebviewPanel {
                 <script>
                     const vscode = acquireVsCodeApi();
                     let selectedLogs = new Set();
-                    
-                    function loginWithGoogle() {
-                        vscode.postMessage({ command: 'loginWithGoogle' });
-                    }
 
                     function setupDebugLogging() {
                         vscode.postMessage({ command: 'setupDebugLogging' });
@@ -599,8 +610,8 @@ export class DebugforceWebviewPanel {
                         // We rely on the extension to reload the view with results
                     }
                     
-                    function analyzeWithGemini() {
-                        vscode.postMessage({ command: 'analyzeWithGemini' });
+                    function analyzeWithAgentforce() {
+                        vscode.postMessage({ command: 'analyzeWithAgentforce' });
                     }
                 </script>
             </body>

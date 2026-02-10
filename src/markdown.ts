@@ -51,25 +51,9 @@ export function generateAnalysisContent(options: AnalysisPacketOptions): string 
 
 ---
 
-## Cursor Prompt
+## 🤖 Cursor AI Prompt
 
-Analyze all downloaded Salesforce debug logs in \`.debugforce/logs\` folder and provide a summarized report. Group the findings by file, listing the latest logs first and the oldest logs last. Please follow this format strictly and ignore any files that do not contain errors.
-
-**Format for each log with errors:**
-
-\`\`\`
-Log File Name: [File Name]
-
-Exceptions & Error Lines: [Extract specific FATAL_ERROR, EXCEPTION_THROWN, or limit breach lines], salesforce Possible error.. 
-
-Root Cause Analysis: [Explain the likely technical reason for this failure based on the log context]
-
-Web-Based Solutions: [Search for or suggest known fixes, specific Salesforce documentation, or StackExchange resolutions]
-\`\`\`
-
-**Note: Do not provide a line-by-line breakdown. Summarize the findings into a clean list.**
-
-**If no errors found in any logs, state: "✅ No errors detected in any of the analyzed logs."**
+Analyze \`${logId}.log\` in \`.debugforce/logs\` and Analyse the Logs highlight the errors Strictly only show the error Log files with valid Salesforce Errors. If the log is clean, reply "✅ No errors detected. Skip the log in Output"
 
 ---
 
