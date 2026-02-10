@@ -12,6 +12,7 @@ import { runDiagnostics } from './diagnostics';
 import { DebugforceWebviewPanel } from './webviewPanel';
 import { analyzeLogsWithGemini } from './geminiAnalyzer';
 import { startBackgroundTask, stopBackgroundTask, resumeBackgroundTaskIfNeeded, isBackgroundTaskRunning } from './backgroundTask';
+import { GoogleAuthManager } from './googleAuth';
 
 let logTreeProvider: LogTreeDataProvider;
 let logTreeView: vscode.TreeView<LogTreeItem>;
@@ -130,6 +131,11 @@ export function activate(context: vscode.ExtensionContext) {
         }),
         vscode.commands.registerCommand('debugforce.analyzeWithGemini', async () => {
             await handleAnalyzeWithGemini();
+        }),
+        vscode.commands.registerCommand('debugforce.loginWithGoogle', async () => {
+            if (extensionContext) {
+                await GoogleAuthManager.getInstance(extensionContext, outputChannel).login();
+            }
         })
     ];
 
@@ -397,6 +403,9 @@ async function handleAnalyzeWithGemini() {
         const apiKey = config.get<string>('geminiApiKey', '');
         const rawLogsFolder = config.get<string>('rawLogsFolder', '.debugforce/logs');
 
+        const authManager = GoogleAuthManager.getInstance(extensionContext!, outputChannel);
+        const accessToken = await authManager.getAccessToken();
+
         if (!useGemini) {
             const action = await vscode.window.showWarningMessage(
                 'Gemini analysis is disabled. Enable it in settings: debugforce.useGemini',
@@ -419,7 +428,7 @@ async function handleAnalyzeWithGemini() {
             return;
         }
 
-        if (!apiKey || apiKey.trim() === '') {
+        if (!accessToken && (!apiKey || apiKey.trim() === '')) {
             const action = await vscode.window.showErrorMessage(
                 'Gemini API key is required. Set it in settings: debugforce.geminiApiKey',
                 'Open Settings',
@@ -444,7 +453,7 @@ async function handleAnalyzeWithGemini() {
                 outputChannel.show();
 
                 try {
-                    const summary = await analyzeLogsWithGemini(rawLogsFolder, apiKey);
+                    const summary = await analyzeLogsWithGemini(rawLogsFolder, { apiKey, accessToken });
                     
                     // Create summary document
                     const workspaceFolders = vscode.workspace.workspaceFolders;

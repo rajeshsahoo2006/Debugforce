@@ -11,7 +11,7 @@ const readdir = promisify(fs.readdir);
  */
 export async function analyzeLogsWithGemini(
     logsFolder: string,
-    apiKey: string
+    auth: { apiKey?: string; accessToken?: string }
 ): Promise<string> {
     // Read all log files
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -82,22 +82,32 @@ ${log.content.substring(0, 50000)} ${log.content.length > 50000 ? '\n... (trunca
 
     // Call Gemini API
     try {
-        const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    contents: [{
-                        parts: [{
-                            text: prompt
-                        }]
+        let url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+
+        if (auth.accessToken) {
+            headers['Authorization'] = `Bearer ${auth.accessToken}`;
+            // When using OAuth, we might need to specify the project or use a different endpoint depending on the exact Google Cloud configuration,
+            // but for the Generative Language API, the standard endpoint with Bearer token usually works if scopes are correct.
+        } else if (auth.apiKey) {
+            url += `?key=${auth.apiKey}`;
+        } else {
+            throw new Error('No valid authentication provided (API Key or Access Token required)');
+        }
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                contents: [{
+                    parts: [{
+                        text: prompt
                     }]
-                })
-            }
-        );
+                }]
+            })
+        });
 
         if (!response.ok) {
             const errorText = await response.text();

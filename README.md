@@ -4,6 +4,8 @@ A VS Code/Cursor extension for Salesforce debug logging that enables debug loggi
 
 ## Features
 
+- **Gemini AI Analysis**: Analyze logs intelligently using Google's Gemini AI (via API Key or Google Login)
+- **Premium UI**: Modern, glassmorphism-style Control Panel for managing logs
 - **Setup Debug Logging**: Automatically creates TraceFlags and DebugLevels for the logged-in user
 - **Fetch Logs**: Queries Apex logs using Salesforce MCP (with CLI fallback) filtered by the authenticated user
 - **Download & Analyze**: Downloads selected logs and generates markdown analysis packets
@@ -26,17 +28,35 @@ A VS Code/Cursor extension for Salesforce debug logging that enables debug loggi
 
 ## Configuration
 
+### Extension Settings
+
 Add these settings to your `settings.json`:
 
 ```json
 {
-  "debugforce.timeWindowMinutes": 5,
+  "debugforce.timeWindowMinutes": 30,
   "debugforce.maxLogs": 50,
   "debugforce.traceMinutes": 30,
   "debugforce.outputFolder": ".debugforce/analysis",
-  "debugforce.truncateRawLogBytes": 1500000
+  "debugforce.truncateRawLogBytes": 1500000,
+  "debugforce.useGemini": true,
+  "debugforce.geminiApiKey": "YOUR_API_KEY", // Optional if using Google Login
+  "debugforce.googleClientId": "YOUR_OAUTH_CLIENT_ID", // Required for Google Login
+  "debugforce.googleClientSecret": "YOUR_OAUTH_CLIENT_SECRET" // Required for Google Login
 }
 ```
+
+### Google Cloud Setup (For OAuth)
+
+To use the "Connect with Google" feature for Gemini:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project.
+3. Enable the **Generative Language API**.
+4. Configure **OAuth Consent Screen** (User Type: External, Testing).
+5. Create **Credentials** > **OAuth Client ID** (Application type: Web application).
+   - **Authorized redirect URIs**: `http://localhost:3000/oauth2callback`
+6. Copy the Client ID and Client Secret to your VS Code settings as shown above.
 
 ## Salesforce MCP Configuration
 
@@ -89,12 +109,19 @@ Perform actions in your Salesforce org that you want to debug (run flows, execut
    - Open it in the editor
 
 The analysis packet includes:
+
 - Header with org/user information
 - Cursor prompt for AI analysis
 - Key extracts (exceptions, limits, SOQL, DML, etc.)
 - Raw log content (truncated if too large)
 
-### Step 5: Cleanup (Optional)
+### Step 5: Gemini Analysis (New!)
+
+1. **Connect**: Click **"Connect with Google"** in the Control Panel (requires OAuth config).
+2. **Analyze**: Select logs and click **"✨ Analyze Selected Logs"**.
+3. **Review**: The extension sends the logs to Gemini and displays a summarized root cause analysis and solution suggestions.
+
+### Step 6: Cleanup (Optional)
 
 When done debugging, run: **Debugforce: Cleanup Trace Flags** to remove trace flags.
 
@@ -105,6 +132,7 @@ When done debugging, run: **Debugforce: Cleanup Trace Flags** to remove trace fl
 **Debugforce only fetches logs where `ApexLog.LogUserId = SFCLILoggedInUserId`**
 
 The extension:
+
 1. Gets the logged-in user ID via `sf org display user --json`
 2. Uses this ID to filter all SOQL queries
 3. Performs defensive checks to discard any mismatched records
@@ -195,6 +223,7 @@ MIT
 ## Contributing
 
 Contributions welcome! Please ensure:
+
 - Code follows TypeScript best practices
 - Uses `spawn` (not `exec`) for CLI commands
 - Handles errors gracefully with user-friendly messages

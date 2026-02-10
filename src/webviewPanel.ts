@@ -24,20 +24,21 @@ export class DebugforceWebviewPanel {
         this._update();
 
         // Listen for when the panel is disposed
-        // This happens when the user closes the panel or when the panel is closed programmatically
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
         // Handle messages from the webview
         this._panel.webview.onDidReceiveMessage(
             async (message) => {
                 switch (message.command) {
+                    case 'loginWithGoogle':
+                        await vscode.commands.executeCommand('debugforce.loginWithGoogle');
+                        break;
                     case 'setupDebugLogging':
                         await vscode.commands.executeCommand('debugforce.setupDebugLogging');
                         this._update();
                         break;
                     case 'fetchLogs':
                         await vscode.commands.executeCommand('debugforce.fetchLogs');
-                        // Wait a bit for logs to be fetched, then update
                         setTimeout(() => this._update(), 1000);
                         break;
                     case 'downloadLog':
@@ -69,27 +70,22 @@ export class DebugforceWebviewPanel {
                                 const logEntry = logs.find(log => log.id === logId);
                                 if (logEntry) {
                                     try {
-                                        // Download log content once
                                         const logContent = await downloadLog(logId, userInfo.orgAlias);
-                                        
-                                        // Download raw log file with original name
                                         try {
                                             await downloadRawLog(logId, userInfo.orgAlias, '.debugforce/logs');
                                         } catch (rawLogError) {
                                             console.error(`Failed to save raw log file: ${rawLogError}`);
                                         }
                                         
-                                        // Generate analysis content for UI
                                         const analysisContent = generateAnalysisContent({
                                             userInfo,
                                             logId,
                                             timeWindowMinutes,
                                             logContent,
-                                            outputFolder: '', // Not needed for content generation
+                                            outputFolder: '',
                                             truncateRawLogBytes
                                         });
                                         
-                                        // Store analysis result
                                         this.analysisResults.push({
                                             logId: logEntry.id,
                                             operation: logEntry.operation,
@@ -97,18 +93,16 @@ export class DebugforceWebviewPanel {
                                             content: analysisContent
                                         });
                                         
-                                        // Also save analysis file for reference (using same logContent)
                                         try {
                                             await generateAnalysisPacket({
                                                 userInfo,
                                                 logId,
                                                 timeWindowMinutes,
-                                                logContent, // Reuse downloaded content
+                                                logContent,
                                                 outputFolder,
                                                 truncateRawLogBytes
                                             });
                                         } catch (fileError) {
-                                            // File save failed, but we have the content in the UI
                                             console.error(`Failed to save analysis file: ${fileError}`);
                                         }
                                     } catch (error) {
@@ -122,24 +116,11 @@ export class DebugforceWebviewPanel {
                                     }
                                 }
                             }
-                            
-                            // Update the webview to show results
                             this._update();
-                            
                             vscode.window.showInformationMessage(
                                 `Debugforce: Analyzed ${this.analysisResults.length} log(s). Results displayed in control panel.`
                             );
                         }
-                        break;
-                    case 'testQuery':
-                        await vscode.commands.executeCommand('debugforce.testQuery');
-                        break;
-                    case 'runDiagnostics':
-                        await vscode.commands.executeCommand('debugforce.runDiagnostics');
-                        break;
-                    case 'cleanupTraceFlags':
-                        await vscode.commands.executeCommand('debugforce.cleanupTraceFlags');
-                        this._update();
                         break;
                     case 'analyzeWithGemini':
                         await vscode.commands.executeCommand('debugforce.analyzeWithGemini');
@@ -156,14 +137,12 @@ export class DebugforceWebviewPanel {
             ? vscode.window.activeTextEditor.viewColumn
             : undefined;
 
-        // If we already have a panel, show it.
         if (DebugforceWebviewPanel.currentPanel) {
             DebugforceWebviewPanel.currentPanel._panel.reveal(column);
             DebugforceWebviewPanel.currentPanel._update();
             return;
         }
 
-        // Otherwise, create a new panel.
         const panel = vscode.window.createWebviewPanel(
             'debugforcePanel',
             'Debugforce Control Panel',
@@ -179,10 +158,7 @@ export class DebugforceWebviewPanel {
 
     public dispose() {
         DebugforceWebviewPanel.currentPanel = undefined;
-
-        // Clean up our resources
         this._panel.dispose();
-
         while (this._disposables.length) {
             const x = this._disposables.pop();
             if (x) {
@@ -203,9 +179,9 @@ export class DebugforceWebviewPanel {
                 <div class="logs-header">
                     <h2>📋 Available Logs (${logs.length})</h2>
                     <div class="selection-info">
-                        <span id="selectedCount">0</span> log(s) selected
-                        <button class="btn-select-all" onclick="toggleSelectAll()">Select All</button>
-                        <button class="btn-clear-selection" onclick="clearSelection()">Clear</button>
+                        <span id="selectedCount">0</span> selected
+                        <button class="btn-text" onclick="toggleSelectAll()">Select All</button>
+                        <button class="btn-text" onclick="clearSelection()">Clear</button>
                     </div>
                 </div>
                 <div class="logs-list">
@@ -214,463 +190,347 @@ export class DebugforceWebviewPanel {
                             <label class="log-checkbox-label">
                                 <input type="checkbox" class="log-checkbox" value="${log.id}" onchange="updateSelection()">
                                 <div class="log-content">
-                                    <div class="log-header">
-                                        <strong>${index + 1}. ${log.operation}</strong>
-                                        <span class="log-size-badge">${this._formatBytes(log.logLength)}</span>
+                                    <div class="log-row">
+                                        <span class="log-index">#${index + 1}</span>
+                                        <strong class="log-op">${log.operation}</strong>
+                                        <span class="log-size">${this._formatBytes(log.logLength)}</span>
                                     </div>
-                                    <div class="log-details">
-                                        <div class="log-detail-item">
-                                            <span class="label">Time:</span>
-                                            <span class="value">${this._formatTime(log.startTime)}</span>
-                                        </div>
-                                        <div class="log-detail-item">
-                                            <span class="label">Duration:</span>
-                                            <span class="value">${this._formatDuration(log.durationMilliseconds)}</span>
-                                        </div>
-                                        <div class="log-detail-item">
-                                            <span class="label">ID:</span>
-                                            <span class="value log-id">${log.id}</span>
-                                        </div>
+                                    <div class="log-meta">
+                                        <span>🕒 ${this._formatTime(log.startTime)}</span>
+                                        <span>⏱️ ${this._formatDuration(log.durationMilliseconds)}</span>
+                                        <span class="log-id-mono">${log.id}</span>
                                     </div>
                                 </div>
                             </label>
                         </div>
                     `).join('')}
                 </div>
-                <div class="analyze-section">
-                    <button class="btn-analyze" id="btnAnalyze" onclick="analyzeSelectedLogs()" disabled>
-                        📊 Analyze Selected Logs
+                <div class="actions-bar">
+                    <button class="btn-primary" id="btnAnalyze" onclick="analyzeSelectedLogs()" disabled>
+                        ✨ Analyze Selected Logs
                     </button>
                 </div>
             `
-            : '<div class="no-logs"><p>No logs found yet.</p><p>Complete Step 1 and Step 2 to see logs here.</p></div>';
+            : '<div class="empty-state"><div class="empty-icon">📂</div><p>No logs found. Run "Fetch Logs" to get started.</p></div>';
 
         return `<!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Debugforce - Step by Step Guide</title>
+                <title>Debugforce</title>
                 <style>
-                    * {
-                        box-sizing: border-box;
+                    :root {
+                        --primary-color: #4CAF50;
+                        --primary-hover: #45a049;
+                        --bg-color: var(--vscode-editor-background);
+                        --text-color: var(--vscode-foreground);
+                        --card-bg: var(--vscode-editor-background); /* Fallback */
+                        --card-border: var(--vscode-panel-border);
+                        --glass-bg: rgba(255, 255, 255, 0.05);
+                        --glass-border: rgba(255, 255, 255, 0.1);
+                        --shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
                     }
+                    
                     body {
                         font-family: var(--vscode-font-family);
                         padding: 20px;
-                        color: var(--vscode-foreground);
-                        background-color: var(--vscode-editor-background);
+                        color: var(--text-color);
+                        background-color: var(--bg-color);
                         margin: 0;
+                        line-height: 1.6;
                     }
-                    .header {
-                        margin-bottom: 30px;
-                        padding-bottom: 15px;
-                        border-bottom: 2px solid var(--vscode-panel-border);
-                    }
-                    .header h1 {
-                        margin: 0 0 5px 0;
-                        font-size: 28px;
-                        color: var(--vscode-textLink-foreground);
-                    }
-                    .header p {
-                        margin: 0;
-                        color: var(--vscode-descriptionForeground);
-                    }
-                    .steps-container {
+
+                    /* Authenticated State logic could be handled via localized variable or simple toggle if known */
+                    
+                    .container {
+                        max-width: 800px;
+                        margin: 0 auto;
                         display: flex;
                         flex-direction: column;
-                        gap: 25px;
+                        gap: 24px;
                     }
-                    .step {
-                        border: 2px solid var(--vscode-panel-border);
-                        border-radius: 8px;
+
+                    /* Cards */
+                    .card {
+                        background: var(--glass-bg);
+                        backdrop-filter: blur(10px);
+                        border: 1px solid var(--glass-border);
+                        border-radius: 12px;
                         padding: 20px;
-                        background-color: var(--vscode-editor-background);
-                        transition: border-color 0.3s;
+                        box-shadow: var(--shadow);
+                        transition: transform 0.2s, box-shadow 0.2s;
                     }
-                    .step.active {
+                    
+                    .card:hover {
+                        transform: translateY(-2px);
+                        box-shadow: 0 8px 12px rgba(0, 0, 0, 0.2);
                         border-color: var(--vscode-textLink-foreground);
-                        box-shadow: 0 0 10px rgba(0, 123, 255, 0.2);
                     }
-                    .step.completed {
-                        border-color: #4caf50;
+
+                    .card-header {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 16px;
                     }
-                    .step-header {
+
+                    .card-title {
+                        font-size: 1.1rem;
+                        font-weight: 600;
                         display: flex;
                         align-items: center;
-                        gap: 15px;
-                        margin-bottom: 15px;
+                        gap: 8px;
+                        margin: 0;
                     }
-                    .step-number {
-                        width: 40px;
-                        height: 40px;
-                        border-radius: 50%;
-                        background-color: var(--vscode-button-background);
-                        color: var(--vscode-button-foreground);
+
+                    /* Buttons */
+                    button {
+                        cursor: pointer;
+                        border: none;
+                        border-radius: 6px;
+                        font-weight: 500;
+                        font-family: inherit;
+                        transition: all 0.2s;
+                    }
+
+                    .btn-primary {
+                        background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                        color: white;
+                        padding: 10px 20px;
+                        width: 100%;
+                        font-size: 1rem;
+                        box-shadow: 0 2px 4px rgba(76, 175, 80, 0.3);
+                    }
+
+                    .btn-primary:disabled {
+                        opacity: 0.6;
+                        cursor: not-allowed;
+                        background: #555;
+                        box-shadow: none;
+                    }
+
+                    .btn-secondary {
+                        background-color: rgba(255, 255, 255, 0.1);
+                        color: var(--text-color);
+                        padding: 8px 16px;
+                    }
+
+                    .btn-secondary:hover {
+                        background-color: rgba(255, 255, 255, 0.2);
+                    }
+
+                    .btn-google {
                         display: flex;
                         align-items: center;
                         justify-content: center;
-                        font-weight: bold;
-                        font-size: 18px;
-                        flex-shrink: 0;
-                    }
-                    .step.completed .step-number {
-                        background-color: #4caf50;
-                    }
-                    .step-title {
-                        font-size: 20px;
-                        font-weight: bold;
-                        margin: 0;
-                    }
-                    .step-description {
-                        margin: 10px 0 15px 0;
-                        color: var(--vscode-descriptionForeground);
-                        line-height: 1.5;
-                    }
-                    button {
-                        padding: 12px 24px;
-                        font-size: 14px;
-                        cursor: pointer;
-                        border: none;
-                        border-radius: 4px;
+                        gap: 10px;
+                        background-color: white;
+                        color: #333;
+                        padding: 10px 20px;
+                        width: 100%;
+                        font-size: 1rem;
                         font-weight: 500;
-                        transition: all 0.2s;
                     }
-                    button:hover:not(:disabled) {
-                        opacity: 0.9;
-                        transform: translateY(-1px);
+                     .btn-google:hover {
+                        background-color: #f1f1f1;
+                     }
+
+                    .btn-text {
+                        background: none;
+                        color: var(--vscode-textLink-foreground);
+                        padding: 4px 8px;
+                        font-size: 0.9rem;
                     }
-                    button:active:not(:disabled) {
-                        transform: translateY(0);
+                    
+                    .btn-text:hover {
+                        text-decoration: underline;
                     }
-                    button:disabled {
-                        opacity: 0.5;
-                        cursor: not-allowed;
-                    }
-                    .btn-primary {
-                        background-color: var(--vscode-button-background);
-                        color: var(--vscode-button-foreground);
-                        font-size: 16px;
-                        padding: 14px 28px;
-                    }
-                    .btn-secondary {
-                        background-color: var(--vscode-button-secondaryBackground);
-                        color: var(--vscode-button-secondaryForeground);
-                    }
-                    .status-message {
-                        margin-top: 15px;
-                        padding: 12px;
-                        border-radius: 4px;
-                        font-size: 13px;
-                        display: none;
-                    }
-                    .status-message.success {
-                        background-color: rgba(76, 175, 80, 0.2);
-                        border-left: 3px solid #4caf50;
-                        display: block;
-                    }
-                    .status-message.error {
-                        background-color: rgba(244, 67, 54, 0.2);
-                        border-left: 3px solid #f44336;
-                        display: block;
-                    }
-                    .status-message.info {
-                        background-color: var(--vscode-textBlockQuote-background);
-                        border-left: 3px solid var(--vscode-textBlockQuote-border);
-                        display: block;
-                    }
-                    .logs-header {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-bottom: 15px;
-                        flex-wrap: wrap;
-                        gap: 10px;
-                    }
-                    .logs-header h2 {
-                        margin: 0;
-                        font-size: 18px;
-                    }
-                    .selection-info {
-                        display: flex;
-                        align-items: center;
-                        gap: 10px;
-                        font-size: 14px;
-                    }
-                    .btn-select-all, .btn-clear-selection {
-                        padding: 6px 12px;
-                        font-size: 12px;
-                    }
+
+                    /* Logs List */
                     .logs-list {
                         max-height: 400px;
                         overflow-y: auto;
-                        margin-bottom: 20px;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 8px;
+                        padding-right: 4px;
                     }
+
                     .log-entry {
-                        border: 1px solid var(--vscode-panel-border);
-                        border-radius: 6px;
-                        padding: 0;
-                        margin-bottom: 10px;
-                        background-color: var(--vscode-editor-background);
+                        background: rgba(0, 0, 0, 0.2);
+                        border: 1px solid transparent;
+                        border-radius: 8px;
                         transition: all 0.2s;
                     }
+
                     .log-entry:hover {
-                        border-color: var(--vscode-textLink-foreground);
-                        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+                        background: rgba(255, 255, 255, 0.05);
                     }
+
                     .log-entry.selected {
-                        border-color: var(--vscode-textLink-foreground);
-                        background-color: rgba(0, 123, 255, 0.1);
+                        border-color: var(--primary-color);
+                        background: rgba(76, 175, 80, 0.1);
                     }
+
                     .log-checkbox-label {
                         display: flex;
-                        align-items: flex-start;
-                        padding: 15px;
+                        padding: 12px;
                         cursor: pointer;
-                        margin: 0;
+                        width: 100%;
                     }
-                    .log-checkbox {
-                        margin-right: 12px;
-                        margin-top: 4px;
-                        width: 18px;
-                        height: 18px;
-                        cursor: pointer;
-                        flex-shrink: 0;
-                    }
+
                     .log-content {
                         flex: 1;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 4px;
                     }
-                    .log-header {
+
+                    .log-row {
                         display: flex;
                         justify-content: space-between;
                         align-items: center;
-                        margin-bottom: 10px;
                     }
-                    .log-header strong {
-                        font-size: 16px;
-                    }
-                    .log-size-badge {
-                        background-color: var(--vscode-badge-background);
-                        color: var(--vscode-badge-foreground);
-                        padding: 4px 10px;
-                        border-radius: 12px;
-                        font-size: 12px;
-                        font-weight: bold;
-                    }
-                    .log-details {
-                        display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                        gap: 10px;
-                        font-size: 13px;
-                    }
-                    .log-detail-item {
+
+                    .log-meta {
                         display: flex;
-                        gap: 8px;
-                    }
-                    .log-detail-item .label {
+                        gap: 12px;
+                        font-size: 0.85rem;
                         color: var(--vscode-descriptionForeground);
-                        font-weight: 500;
                     }
-                    .log-detail-item .value {
-                        color: var(--vscode-foreground);
-                    }
-                    .log-id {
+                    
+                    .log-id-mono {
                         font-family: monospace;
-                        font-size: 11px;
+                        opacity: 0.7;
                     }
-                    .analyze-section {
-                        margin-top: 20px;
-                        padding-top: 20px;
-                        border-top: 2px solid var(--vscode-panel-border);
-                        text-align: center;
+
+                    .log-size {
+                        background: rgba(255,255,255,0.1);
+                        padding: 2px 6px;
+                        border-radius: 4px;
+                        font-size: 0.8rem;
                     }
-                    .btn-analyze {
-                        background-color: #4caf50;
-                        color: white;
-                        font-size: 16px;
-                        padding: 14px 32px;
-                    }
-                    .btn-analyze:not(:disabled):hover {
-                        background-color: #45a049;
-                    }
-                    .no-logs {
-                        padding: 40px 20px;
-                        text-align: center;
-                        color: var(--vscode-descriptionForeground);
-                    }
-                    .no-logs p {
-                        margin: 10px 0;
-                    }
-                    .analysis-results {
-                        margin-top: 20px;
-                    }
+
+                    /* Analysis Results */
                     .analysis-result {
-                        border: 1px solid var(--vscode-panel-border);
-                        border-radius: 6px;
-                        padding: 20px;
-                        margin-bottom: 20px;
-                        background-color: var(--vscode-editor-background);
+                        margin-top: 20px;
+                        animation: slideIn 0.3s ease-out;
                     }
-                    .analysis-header {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-bottom: 15px;
-                        padding-bottom: 10px;
-                        border-bottom: 1px solid var(--vscode-panel-border);
+
+                    @keyframes slideIn {
+                        from { opacity: 0; transform: translateY(10px); }
+                        to { opacity: 1; transform: translateY(0); }
                     }
-                    .analysis-header h4 {
-                        margin: 0;
-                        font-size: 18px;
-                    }
-                    .analysis-time {
-                        color: var(--vscode-descriptionForeground);
-                        font-size: 12px;
-                    }
-                    .analysis-content {
-                        max-height: 600px;
-                        overflow-y: auto;
-                        font-size: 13px;
+
+                    .markdown-body {
+                        font-size: 0.95rem;
                         line-height: 1.6;
                     }
-                    .analysis-content h1 {
-                        font-size: 24px;
-                        margin-top: 0;
-                        margin-bottom: 15px;
-                        border-bottom: 2px solid var(--vscode-panel-border);
-                        padding-bottom: 10px;
-                    }
-                    .analysis-content h2 {
-                        font-size: 20px;
-                        margin-top: 25px;
-                        margin-bottom: 15px;
-                        color: var(--vscode-textLink-foreground);
-                    }
-                    .analysis-content h3 {
-                        font-size: 16px;
-                        margin-top: 20px;
-                        margin-bottom: 10px;
-                    }
-                    .analysis-content code {
-                        background-color: var(--vscode-textCodeBlock-background);
-                        padding: 2px 6px;
-                        border-radius: 3px;
-                        font-family: var(--vscode-editor-font-family);
-                        font-size: 12px;
-                    }
-                    .analysis-content pre {
-                        background-color: var(--vscode-textCodeBlock-background);
-                        padding: 15px;
-                        border-radius: 4px;
-                        overflow-x: auto;
-                        border: 1px solid var(--vscode-panel-border);
-                    }
-                    .analysis-content pre code {
-                        background: none;
-                        padding: 0;
-                    }
-                    .analysis-content ul, .analysis-content ol {
-                        margin: 10px 0;
-                        padding-left: 25px;
-                    }
-                    .analysis-content li {
-                        margin: 5px 0;
-                    }
-                    .analysis-content p {
-                        margin: 10px 0;
-                    }
-                    .analysis-content strong {
-                        font-weight: 600;
-                    }
-                    .analysis-content blockquote {
-                        border-left: 3px solid var(--vscode-textBlockQuote-border);
-                        padding-left: 15px;
-                        margin: 15px 0;
+                    
+                    .markdown-body h1 { font-size: 1.5rem; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.5em; }
+                    .markdown-body h2 { font-size: 1.3rem; margin-top: 1.5em; }
+                    .markdown-body pre { background: rgba(0,0,0,0.3); padding: 1em; border-radius: 8px; overflow-x: auto; }
+                    .markdown-body code { font-family: 'Menlo', 'Monaco', monospace; font-size: 0.9em; }
+
+                    /* Empty State */
+                    .empty-state {
+                        text-align: center;
+                        padding: 40px;
                         color: var(--vscode-descriptionForeground);
                     }
+                    .empty-icon {
+                        font-size: 3rem;
+                        margin-bottom: 16px;
+                        opacity: 0.5;
+                    }
+
+                    /* Status */
+                    .status-pill {
+                        padding: 4px 8px;
+                        border-radius: 12px;
+                        font-size: 0.8rem;
+                        font-weight: 500;
+                    }
+                    .status-success { background: rgba(76, 175, 80, 0.2); color: #4CAF50; }
+                    
+                    /* Scrollbar */
+                    ::-webkit-scrollbar {
+                        width: 8px;
+                        height: 8px;
+                    }
+                    ::-webkit-scrollbar-track {
+                        background: transparent;
+                    }
+                    ::-webkit-scrollbar-thumb {
+                        background: rgba(255, 255, 255, 0.2);
+                        border-radius: 4px;
+                    }
+                    ::-webkit-scrollbar-thumb:hover {
+                        background: rgba(255, 255, 255, 0.3);
+                    }
+
                 </style>
             </head>
             <body>
-                <div class="header">
-                    <h1>🔍 Debugforce - Step by Step Guide</h1>
-                    <p>Follow these steps to set up debug logging and analyze your Salesforce Apex logs</p>
-                </div>
-
-                <div class="steps-container">
-                    <!-- Step 1: Setup Debug Logging -->
-                    <div class="step" id="step1">
-                        <div class="step-header">
-                            <div class="step-number">1</div>
-                            <h3 class="step-title">Set Up Debug Logging</h3>
+                <div class="container">
+                    <!-- Auth Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">🔐 Authentication</h3>
+                            <span class="status-pill status-success" style="display:none;" id="authStatus">Connected</span>
                         </div>
-                        <p class="step-description">
-                            Create a TraceFlag and DebugLevel to enable debug logging for your user. 
-                            This will capture detailed execution logs for the next 30 minutes.
+                        <p style="margin-bottom: 16px; font-size: 0.9rem; opacity: 0.8;">
+                            Connect with Google to enable advanced log analysis with Gemini.
                         </p>
-                        <button class="btn-primary" onclick="setupDebugLogging()">
-                            ⚙️ Setup Debug Logging (30 min)
+                        <button class="btn-google" onclick="loginWithGoogle()">
+                            <svg width="18" height="18" viewBox="0 0 18 18">
+                                <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
+                                <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.715H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+                                <path fill="#FBBC05" d="M3.964 10.71a5.41 5.41 0 0 1 0-3.42V4.958H.957a9.006 9.006 0 0 0 0 6.64l3.007-2.332z"/>
+                                <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+                            </svg>
+                            Connect with Google
                         </button>
-                        <div class="status-message" id="step1-status"></div>
                     </div>
 
-                    <!-- Step 2: Fetch Logs -->
-                    <div class="step" id="step2">
-                        <div class="step-header">
-                            <div class="step-number">2</div>
-                            <h3 class="step-title">Download and Show All Debug Logs</h3>
+                    <!-- Steps Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">🚀 Quick Actions</h3>
                         </div>
-                        <p class="step-description">
-                            Fetch all available Apex logs from Salesforce. Logs will be displayed below with their sizes.
-                            Make sure you've performed some actions in Salesforce after Step 1 to generate logs.
-                        </p>
-                        <button class="btn-primary" onclick="fetchLogs()">
-                            📥 Fetch Logs
-                        </button>
-                        <div style="margin-top: 10px;">
-                            <button class="btn-secondary" onclick="analyzeWithGemini()">
-                                🤖 Analyze All Logs with Gemini
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                            <button class="btn-secondary" onclick="setupDebugLogging()">
+                                ⚙️ Setup Logging (30m)
+                            </button>
+                            <button class="btn-secondary" onclick="fetchLogs()">
+                                📥 Fetch Latest Logs
                             </button>
                         </div>
-                        <div class="status-message" id="step2-status"></div>
                     </div>
 
-                    <!-- Step 3: Select and Analyze Logs -->
-                    <div class="step" id="step3">
-                        <div class="step-header">
-                            <div class="step-number">3</div>
-                            <h3 class="step-title">Select Logs and Analyze</h3>
-                        </div>
-                        <p class="step-description">
-                            Select one or more logs from the list below, then click "Analyze Selected Logs" to generate 
-                            analysis packets. Each selected log will be downloaded and analyzed.
-                        </p>
+                    <!-- Logs Card -->
+                    <div class="card">
                         ${logsHtml}
                     </div>
 
-                    <!-- Step 4: Analysis Results -->
+                    <!-- Analysis Results -->
                     ${analysisResults.length > 0 ? `
-                    <div class="step" id="step4">
-                        <div class="step-header">
-                            <div class="step-number">4</div>
-                            <h3 class="step-title">Analysis Results</h3>
-                        </div>
-                        <p class="step-description">
-                            Analysis results for ${analysisResults.length} log(s). Review the analysis below.
-                        </p>
-                        <div class="analysis-results">
-                            ${analysisResults.map((result, index) => `
-                                <div class="analysis-result">
-                                    <div class="analysis-header">
-                                        <h4>Log ${index + 1}: ${result.operation} (${result.logId})</h4>
-                                        <span class="analysis-time">${this._formatTime(result.timestamp)}</span>
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title">✨ Analysis Results</h3>
+                            </div>
+                            <div class="analysis-results">
+                                ${analysisResults.map(result => `
+                                    <div class="analysis-result">
+                                        <h4>${result.operation} <span style="font-weight:normal; opacity:0.7">(${result.logId})</span></h4>
+                                        <div class="markdown-body">
+                                            ${this._markdownToHtml(result.content)}
+                                        </div>
                                     </div>
-                                    <div class="analysis-content">
-                                        ${this._markdownToHtml(result.content)}
-                                    </div>
-                                </div>
-                            `).join('')}
+                                `).join('')}
+                            </div>
                         </div>
-                    </div>
                     ` : ''}
                 </div>
 
@@ -678,31 +538,16 @@ export class DebugforceWebviewPanel {
                     const vscode = acquireVsCodeApi();
                     let selectedLogs = new Set();
                     
+                    function loginWithGoogle() {
+                        vscode.postMessage({ command: 'loginWithGoogle' });
+                    }
+
                     function setupDebugLogging() {
-                        const statusEl = document.getElementById('step1-status');
-                        statusEl.className = 'status-message info';
-                        statusEl.textContent = 'Setting up debug logging...';
                         vscode.postMessage({ command: 'setupDebugLogging' });
-                        setTimeout(() => {
-                            statusEl.className = 'status-message success';
-                            statusEl.textContent = '✓ Debug logging setup completed! You can now perform actions in Salesforce.';
-                            document.getElementById('step1').classList.add('completed');
-                            document.getElementById('step2').classList.add('active');
-                        }, 2000);
                     }
                     
                     function fetchLogs() {
-                        const statusEl = document.getElementById('step2-status');
-                        statusEl.className = 'status-message info';
-                        statusEl.textContent = 'Fetching logs from Salesforce...';
                         vscode.postMessage({ command: 'fetchLogs' });
-                        setTimeout(() => {
-                            statusEl.className = 'status-message success';
-                            statusEl.textContent = '✓ Logs fetched successfully! Select logs below to analyze.';
-                            document.getElementById('step2').classList.add('completed');
-                            document.getElementById('step3').classList.add('active');
-                            window.location.reload();
-                        }, 2000);
                     }
                     
                     function updateSelection() {
@@ -711,9 +556,13 @@ export class DebugforceWebviewPanel {
                         document.getElementById('selectedCount').textContent = selectedLogs.size;
                         
                         const btnAnalyze = document.getElementById('btnAnalyze');
-                        btnAnalyze.disabled = selectedLogs.size === 0;
+                        if (btnAnalyze) {
+                            btnAnalyze.disabled = selectedLogs.size === 0;
+                            btnAnalyze.innerHTML = selectedLogs.size > 0 
+                                ? '✨ Analyze ' + selectedLogs.size + ' Log(s)' 
+                                : '✨ Analyze Selected Logs';
+                        }
                         
-                        // Update visual selection
                         document.querySelectorAll('.log-entry').forEach(entry => {
                             const logId = entry.dataset.logId;
                             if (selectedLogs.has(logId)) {
@@ -736,39 +585,23 @@ export class DebugforceWebviewPanel {
                         updateSelection();
                     }
                     
-                    function analyzeWithGemini() {
-                        vscode.postMessage({ command: 'analyzeWithGemini' });
-                    }
-                    
                     function analyzeSelectedLogs() {
-                        if (selectedLogs.size === 0) {
-                            return;
-                        }
+                        if (selectedLogs.size === 0) return;
+                        
+                        const btn = document.getElementById('btnAnalyze');
+                        const originalText = btn.innerHTML;
+                        btn.disabled = true;
+                        btn.innerHTML = '⏳ Analyzing...';
                         
                         const logIds = Array.from(selectedLogs);
                         vscode.postMessage({ command: 'analyzeLogs', logIds: logIds });
                         
-                        const statusEl = document.getElementById('step3').querySelector('.status-message');
-                        if (!statusEl) {
-                            const step3 = document.getElementById('step3');
-                            const statusDiv = document.createElement('div');
-                            statusDiv.className = 'status-message info';
-                            statusDiv.id = 'step3-status';
-                            statusDiv.textContent = \`Analyzing \${logIds.length} log(s)...\`;
-                            step3.appendChild(statusDiv);
-                        } else {
-                            statusEl.className = 'status-message info';
-                            statusEl.textContent = \`Analyzing \${logIds.length} log(s)...\`;
-                        }
-                        
-                        // Reload after analysis completes to show results
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 3000);
+                        // We rely on the extension to reload the view with results
                     }
                     
-                    // Initialize
-                    updateSelection();
+                    function analyzeWithGemini() {
+                        vscode.postMessage({ command: 'analyzeWithGemini' });
+                    }
                 </script>
             </body>
             </html>`;
@@ -778,7 +611,7 @@ export class DebugforceWebviewPanel {
         if (!isoString) return 'Unknown';
         try {
             const date = new Date(isoString);
-            return date.toLocaleString();
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } catch {
             return isoString;
         }
@@ -797,42 +630,13 @@ export class DebugforceWebviewPanel {
 
     private _markdownToHtml(markdown: string): string {
         // Simple markdown to HTML converter
-        let html = markdown;
-        
-        // Escape HTML
-        html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        
-        // Headers
-        html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-        html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-        html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-        
-        // Bold
-        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        
-        // Code blocks
-        html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-        
-        // Inline code
-        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-        
-        // Lists
-        html = html.replace(/^\- (.*$)/gim, '<li>$1</li>');
-        html = html.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
-        
-        // Blockquotes
-        html = html.replace(/^> (.*$)/gim, '<blockquote>$1</blockquote>');
-        
-        // Paragraphs
-        html = html.replace(/\n\n/g, '</p><p>');
-        html = '<p>' + html + '</p>';
-        
-        // Clean up nested lists
-        html = html.replace(/<\/ul>\s*<ul>/g, '');
-        
-        // Horizontal rules
-        html = html.replace(/^---$/gim, '<hr>');
-        
+        let html = markdown
+            .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+            .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+            .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+            .replace(/^\`\`\`\s*([\s\S]*?)\s*\`\`\`/gim, '<pre><code>$1</code></pre>')
+            .replace(/\*\*(.*)\*\*/gim, '<b>$1</b>')
+            .replace(/\n/gim, '<br />');
         return html;
     }
 }

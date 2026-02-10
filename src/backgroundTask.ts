@@ -5,6 +5,7 @@ import { downloadRawLog } from './rawLogDownload';
 import { getCurrentUser } from './userContext';
 import * as path from 'path';
 import * as fs from 'fs';
+import { GoogleAuthManager } from './googleAuth';
 
 let backgroundInterval: NodeJS.Timeout | undefined;
 let setupTimestamp: number | undefined;
@@ -152,10 +153,17 @@ async function performBackgroundFetch(
         }
 
         // Auto-analyze with Gemini if enabled
-        if (useGemini && geminiApiKey && geminiApiKey.trim() !== '') {
+        const authManager = GoogleAuthManager.getInstance(context, outputChannel);
+        const accessToken = await authManager.getAccessToken();
+
+        if (useGemini && (geminiApiKey || accessToken)) {
             try {
                 outputChannel.appendLine(`[Background] Analyzing logs with Gemini...`);
-                const summary = await analyzeLogsWithGemini(rawLogsFolder, geminiApiKey);
+                // Using 'as any' to bypass the strict type check if needed, or better, ensure the type matches
+                // The analyzeLogsWithGemini function was updated to accept { apiKey?: string; accessToken?: string }
+                // which is compatible with the object we are creating here.
+                const auth = { apiKey: geminiApiKey, accessToken: accessToken };
+                const summary = await analyzeLogsWithGemini(rawLogsFolder, auth);
                 
                 // Save summary
                 const summaryPath = path.join(workspaceRoot, '.debugforce/analysis', `gemini_auto_${Date.now()}.md`);

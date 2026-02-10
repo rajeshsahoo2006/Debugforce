@@ -127,13 +127,6 @@
           "when": "view == debugforceLogs",
           "group": "inline"
         }
-      ],
-      "view/title": [
-        {
-          "command": "debugforce.fetchLogs",
-          "when": "view == debugforceLogs",
-          "group": "navigation"
-        }
       ]
     }
   },
@@ -150,5 +143,10 @@
     "@vscode/vsce": "^2.22.0",
     "typescript": "^5.0.0"
   },
-  "dependencies": {}
+  "dependencies": {
+    "google-auth-library": "^9.0.0"
+  },
+  "overrides": {
+    "undici": "^5.0.0"
+  }
 }
