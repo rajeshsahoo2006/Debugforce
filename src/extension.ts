@@ -6,11 +6,11 @@ import { getCurrentUser, getSFCLILoggedInUserId, clearUserCache } from './userCo
 import { fetchLogs } from './logQuery';
 import { downloadLog } from './logDownload';
 import { generateAnalysisPacket } from './markdown';
+import { analyzeLogsLocally } from './localAnalyzer';
 import { downloadRawLog } from './rawLogDownload';
 import { setupDebugLogging, cleanupTraceFlags, setOutputChannel } from './traceFlags';
 import { runDiagnostics } from './diagnostics';
 import { DebugforceWebviewPanel } from './webviewPanel';
-import { analyzeLogsLocally } from './localAnalyzer';
 import { startBackgroundTask, stopBackgroundTask, resumeBackgroundTaskIfNeeded, isBackgroundTaskRunning } from './backgroundTask';
 
 let logTreeProvider: LogTreeDataProvider;
@@ -130,6 +130,9 @@ export function activate(context: vscode.ExtensionContext) {
         }),
         vscode.commands.registerCommand('debugforce.analyzeWithAgentforce', async () => {
             await handleAnalyzeWithAgentforce();
+        }),
+        vscode.commands.registerCommand('debugforce.openLogForAI', async (item?: LogTreeItem | string) => {
+            await handleOpenLogForAI(item);
         })
     ];
 
@@ -204,40 +207,8 @@ async function handleFetchLogs() {
         const rawLogsFolder = config.get<string>('rawLogsFolder', '.debugforce/logs');
 
         outputChannel.appendLine('=== Fetching Logs ===');
-        
-        // Clean up existing log files before fetching new ones
-        try {
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (workspaceFolders && workspaceFolders.length > 0) {
-                const workspaceRoot = workspaceFolders[0].uri.fsPath;
-                const logsDir = path.join(workspaceRoot, rawLogsFolder);
-                
-                // Check if directory exists and has log files
-                try {
-                    const files = await fs.promises.readdir(logsDir);
-                    const logFiles = files.filter((f: string) => f.endsWith('.log'));
-                    
-                    if (logFiles.length > 0) {
-                        outputChannel.appendLine(`Found ${logFiles.length} existing log file(s), deleting...`);
-                        for (const file of logFiles) {
-                            const filePath = path.join(logsDir, file);
-                            await fs.promises.unlink(filePath);
-                            outputChannel.appendLine(`  Deleted: ${file}`);
-                        }
-                        outputChannel.appendLine('✓ Existing logs cleaned up');
-                    }
-                } catch (error) {
-                    // Directory doesn't exist or can't be read - that's okay
-                    outputChannel.appendLine('No existing logs to clean up');
-                }
-            }
-        } catch (error) {
-            outputChannel.appendLine(`⚠ Warning: Could not clean up existing logs: ${error instanceof Error ? error.message : String(error)}`);
-        }
-        
         outputChannel.show();
 
-        // Show progress
         await vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
@@ -245,43 +216,63 @@ async function handleFetchLogs() {
                 cancellable: false
             },
             async () => {
+                // 1. Delete existing logs from folder
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (workspaceFolders && workspaceFolders.length > 0) {
+                    const workspaceRoot = workspaceFolders[0].uri.fsPath;
+                    const logsDir = path.join(workspaceRoot, rawLogsFolder);
+                    try {
+                        const files = await fs.promises.readdir(logsDir);
+                        const logFiles = files.filter((f: string) => f.endsWith('.log'));
+                        if (logFiles.length > 0) {
+                            outputChannel.appendLine(`Deleting ${logFiles.length} existing log file(s)...`);
+                            for (const file of logFiles) {
+                                await fs.promises.unlink(path.join(logsDir, file));
+                                outputChannel.appendLine(`  Deleted: ${file}`);
+                            }
+                            outputChannel.appendLine('✓ Logs folder cleared');
+                        }
+                    } catch {
+                        await fs.promises.mkdir(logsDir, { recursive: true });
+                    }
+                }
+
+                // 2. Fetch metadata from Salesforce
                 const logs = await fetchLogs(timeWindowMinutes, maxLogs);
-                
                 outputChannel.appendLine(`fetchLogs returned ${logs.length} log(s)`);
-                
+
                 if (logs.length === 0) {
                     const message = `Debugforce: No logs found for the last ${timeWindowMinutes} minutes. Make sure you have:\n1. Set up debug logging\n2. Performed actions in Salesforce\n3. The time window covers when activity occurred`;
                     outputChannel.appendLine(message);
-                    outputChannel.show();
                     vscode.window.showWarningMessage(
                         `Debugforce: No logs found for the last ${timeWindowMinutes} minutes`
                     );
-                } else {
-                    outputChannel.appendLine(`✓ Found ${logs.length} log(s), refreshing tree view...`);
-                    // Log each log ID for debugging
-                    logs.forEach((log, index) => {
-                        outputChannel.appendLine(`  Log ${index + 1}: ${log.id} - ${log.operation}`);
-                    });
-                    vscode.window.showInformationMessage(
-                        `Debugforce: Found ${logs.length} log(s)`
-                    );
+                    logTreeProvider.refresh([], true);
+                    DebugforceWebviewPanel.createOrShow(logTreeProvider);
+                    return;
                 }
-                
-                outputChannel.appendLine(`Calling logTreeProvider.refresh with ${logs.length} logs`);
-                if (logs.length > 0) {
-                    outputChannel.appendLine(`First log details: id=${logs[0].id}, operation=${logs[0].operation}`);
+
+                // 3. Download each log to folder
+                outputChannel.appendLine(`Downloading ${logs.length} log(s) to folder...`);
+                const userInfo = await getCurrentUser();
+                let downloadedCount = 0;
+                for (const log of logs) {
+                    try {
+                        await downloadRawLog(log.id, userInfo.orgAlias, rawLogsFolder);
+                        downloadedCount++;
+                        outputChannel.appendLine(`  Downloaded: ${log.id}.log`);
+                    } catch (err) {
+                        outputChannel.appendLine(`  ✗ Failed ${log.id}: ${err instanceof Error ? err.message : String(err)}`);
+                    }
                 }
-                logTreeProvider.refresh(logs);
-                const providerLogs = logTreeProvider.getLogs();
-                outputChannel.appendLine(`Tree view refreshed. Provider now has ${providerLogs.length} logs`);
-                if (providerLogs.length > 0) {
-                    outputChannel.appendLine(`Provider first log: id=${providerLogs[0].id}`);
-                } else {
-                    outputChannel.appendLine(`⚠ WARNING: Provider has 0 logs after refresh!`);
-                }
-                
-                // Update webview panel if it's open
+                outputChannel.appendLine(`✓ Downloaded ${downloadedCount} log file(s)`);
+
+                // 4. Refresh tree and show webview with available logs
+                logTreeProvider.refresh(logs, true);
                 DebugforceWebviewPanel.createOrShow(logTreeProvider);
+                vscode.window.showInformationMessage(
+                    `Debugforce: Fetched and downloaded ${downloadedCount} log(s)`
+                );
             }
         );
     } catch (error) {
@@ -402,19 +393,19 @@ async function handleAnalyzeWithAgentforce() {
                 cancellable: false
             },
             async () => {
-                outputChannel.appendLine('=== Agentforce Log Analysis ===');
+                outputChannel.appendLine('=== Log Analysis ===');
                 outputChannel.show();
 
-                try {
-                    const summary = await analyzeLogsLocally(rawLogsFolder);
-                    
-                    // Create summary document
-                    const workspaceFolders = vscode.workspace.workspaceFolders;
-                    if (workspaceFolders && workspaceFolders.length > 0) {
-                        const workspaceRoot = workspaceFolders[0].uri.fsPath;
-                        const summaryPath = path.join(workspaceRoot, '.debugforce/analysis', `analysis_summary_${Date.now()}.md`);
-                        
-                        const summaryContent = `# Agentforce Log Analysis Summary
+                const summary = await analyzeLogsLocally(rawLogsFolder);
+
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (!workspaceFolders || workspaceFolders.length === 0) {
+                    throw new Error('No workspace folder open');
+                }
+
+                const workspaceRoot = workspaceFolders[0].uri.fsPath;
+                const summaryPath = path.join(workspaceRoot, '.debugforce/analysis', `analysis_summary_${Date.now()}.md`);
+                const content = `# Debugforce Log Analysis Report
 
 Generated: ${new Date().toISOString()}
 
@@ -424,39 +415,105 @@ ${summary}
 
 ---
 
-## 💡 Next Steps
+## Next Steps
 
-1. **Review Error Details**: Check each log file mentioned above for complete context
-2. **Search for Solutions**: Use the error messages to search Salesforce documentation and developer forums
-3. **Fix & Test**: Apply fixes and re-run your tests to verify the issues are resolved
-4. **Clean Logs**: Run "Debugforce: Fetch Logs" to get fresh logs after making changes
-
----
-
-*Powered by Debugforce - Agentforce Analysis Engine*
+1. **Review** the error details above and check the log files in \`.debugforce/logs\`
+2. **Fix** the root causes in your code or validation rules
+3. **Re-fetch** logs after making changes to verify fixes
 `;
 
-                        await fs.promises.mkdir(path.dirname(summaryPath), { recursive: true });
-                        await fs.promises.writeFile(summaryPath, summaryContent, 'utf-8');
+                await fs.promises.mkdir(path.dirname(summaryPath), { recursive: true });
+                await fs.promises.writeFile(summaryPath, content, 'utf-8');
 
-                        // Open the summary
-                        const document = await vscode.workspace.openTextDocument(summaryPath);
-                        await vscode.window.showTextDocument(document);
+                const document = await vscode.workspace.openTextDocument(summaryPath);
+                await vscode.window.showTextDocument(document);
 
-                        outputChannel.appendLine(`✓ Analysis complete: ${summaryPath}`);
-                        vscode.window.showInformationMessage('Debugforce: Log analysis complete');
-                    }
-                } catch (error) {
-                    const errorMessage = error instanceof Error ? error.message : String(error);
-                    outputChannel.appendLine(`✗ Analysis failed: ${errorMessage}`);
-                    outputChannel.show();
-                    throw error;
-                }
+                outputChannel.appendLine(`✓ Analysis complete: ${summaryPath}`);
+                vscode.window.showInformationMessage('Debugforce: Log analysis complete');
             }
         );
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        outputChannel.appendLine(`✗ Analysis failed: ${message}`);
+        outputChannel.show();
         vscode.window.showErrorMessage(`Debugforce: Analysis failed: ${message}`);
+    }
+}
+
+async function handleOpenLogForAI(item?: LogTreeItem | string) {
+    try {
+        let logItem: LogTreeItem | undefined;
+
+        if (item instanceof LogTreeItem) {
+            logItem = item;
+        } else if (typeof item === 'string') {
+            const logs = logTreeProvider.getLogs();
+            const logEntry = logs.find(log => log.id === item);
+            if (logEntry) {
+                logItem = new LogTreeItem(logEntry, vscode.TreeItemCollapsibleState.None);
+            }
+        }
+
+        if (!logItem) {
+            const selection = logTreeView.selection;
+            if (selection && selection.length > 0) {
+                logItem = selection[0];
+            }
+        }
+
+        if (!logItem) {
+            const logs = logTreeProvider.getLogs();
+            if (logs.length === 1) {
+                logItem = new LogTreeItem(logs[0], vscode.TreeItemCollapsibleState.None);
+            }
+        }
+
+        if (!logItem) {
+            const logs = logTreeProvider.getLogs();
+            vscode.window.showWarningMessage(
+                logs.length === 0
+                    ? 'Debugforce: Fetch logs first, then select a log to open for AI analysis.'
+                    : 'Debugforce: Select a log from the tree view, or right-click and choose "Open Log for AI Analysis".'
+            );
+            return;
+        }
+
+        const config = vscode.workspace.getConfiguration('debugforce');
+        const rawLogsFolder = config.get<string>('rawLogsFolder', '.debugforce/logs');
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            vscode.window.showErrorMessage('Debugforce: No workspace folder open.');
+            return;
+        }
+
+        const workspaceRoot = workspaceFolders[0].uri.fsPath;
+        const logFilePath = path.join(workspaceRoot, rawLogsFolder, `${logItem.logEntry.id}.log`);
+
+        try {
+            await fs.promises.access(logFilePath);
+        } catch {
+            vscode.window.showWarningMessage(
+                `Debugforce: Log file not found at ${logFilePath}. Click "Fetch Logs" first to download it.`,
+                'Fetch Logs'
+            ).then(sel => {
+                if (sel === 'Fetch Logs') {
+                    handleFetchLogs();
+                }
+            });
+            return;
+        }
+
+        const document = await vscode.workspace.openTextDocument(logFilePath);
+        await vscode.window.showTextDocument(document);
+
+        vscode.window.showInformationMessage(
+            'Debugforce: Log opened. Ask Cursor to "analyze this Salesforce debug log" or "find errors in this Apex log".',
+            { modal: false }
+        );
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`Debugforce: Failed to open log: ${message}`);
     }
 }
 

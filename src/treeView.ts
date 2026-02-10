@@ -12,42 +12,32 @@ export class LogTreeDataProvider implements vscode.TreeDataProvider<LogTreeItem>
         return this.logs;
     }
 
-    refresh(logs: ApexLogEntry[]): void {
-        console.log(`LogTreeDataProvider.refresh called with ${logs?.length || 0} logs`);
-        if (logs && logs.length > 0) {
-            console.log(`First log in refresh: ${logs[0].id}`);
+    refresh(logs: ApexLogEntry[], replace?: boolean): void {
+        // When replace=true (e.g. from Fetch Logs), always replace with new list
+        if (replace && logs) {
+            this.logs = logs;
+        } else if (logs && logs.length > 0) {
+            // Merge new logs with existing; keep unique by ID
+            const existingLogIds = new Set(this.logs.map(log => log.id));
+            const newLogs = logs.filter(log => !existingLogIds.has(log.id));
+            if (newLogs.length > 0) {
+                this.logs = [...this.logs, ...newLogs];
+            } else {
+                this.logs = logs; // Replace when no new unique IDs (same time window)
+            }
+        } else if (logs) {
+            this.logs = logs; // Empty or explicit replace
         }
-        
-        // Merge new logs with existing logs (don't replace, append new ones)
-        // Keep unique logs by ID
-        const existingLogIds = new Set(this.logs.map(log => log.id));
-        const newLogs = (logs || []).filter(log => !existingLogIds.has(log.id));
-        
-        if (newLogs.length > 0) {
-            console.log(`Adding ${newLogs.length} new logs to existing ${this.logs.length} logs`);
-            this.logs = [...this.logs, ...newLogs];
-            // Sort by StartTime descending (newest first)
+
+        // Sort by StartTime descending (newest first)
+        if (this.logs.length > 0) {
             this.logs.sort((a, b) => {
                 const timeA = new Date(a.startTime).getTime();
                 const timeB = new Date(b.startTime).getTime();
                 return timeB - timeA;
             });
-        } else if (logs && logs.length > 0) {
-            // If no new logs but we got logs, replace (user might have changed time window)
-            console.log(`Replacing logs (no new unique logs found)`);
-            this.logs = logs;
-        } else {
-            // Keep existing logs if no new logs found
-            console.log(`No new logs, keeping existing ${this.logs.length} logs`);
         }
-        
-        console.log(`LogTreeDataProvider now has ${this.logs.length} logs`);
-        if (this.logs.length > 0) {
-            console.log(`First log stored: ${this.logs[0].id}`);
-        }
-        // Fire the event to refresh the tree view
         this._onDidChangeTreeData.fire();
-        console.log(`Tree data change event fired`);
     }
 
     getTreeItem(element: LogTreeItem): vscode.TreeItem {

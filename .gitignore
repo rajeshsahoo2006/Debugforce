@@ -3,3 +3,6 @@ node_modules/
 .vscode-test/
 .DS_Store
 .debugforce/
+debugforce-mcp/dist/
+debugforce-mcp/src/*.js
+debugforce-mcp/src/*.js.map

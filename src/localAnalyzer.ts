@@ -13,6 +13,7 @@ interface LogAnalysis {
     fatalErrors: string[];
     limitIssues: string[];
     flowErrors: string[];
+    validationErrors: string[];
     summary: string;
 }
 
@@ -28,6 +29,7 @@ function analyzeLogContent(filename: string, content: string): LogAnalysis {
         fatalErrors: [],
         limitIssues: [],
         flowErrors: [],
+        validationErrors: [],
         summary: ''
     };
 
@@ -69,6 +71,12 @@ function analyzeLogContent(filename: string, content: string): LogAnalysis {
             analysis.flowErrors.push(line.trim());
             analysis.hasErrors = true;
         }
+
+        // Check for validation errors
+        if (line.includes('VALIDATION_FAIL') || line.includes('VALIDATION_ERROR')) {
+            analysis.validationErrors.push(line.trim());
+            analysis.hasErrors = true;
+        }
     }
 
     // Generate summary
@@ -85,6 +93,9 @@ function analyzeLogContent(filename: string, content: string): LogAnalysis {
         }
         if (analysis.flowErrors.length > 0) {
             parts.push(`${analysis.flowErrors.length} flow error(s)`);
+        }
+        if (analysis.validationErrors.length > 0) {
+            parts.push(`${analysis.validationErrors.length} validation error(s)`);
         }
         analysis.summary = parts.join(', ');
     }
@@ -193,6 +204,16 @@ export async function analyzeLogsLocally(logsFolder: string): Promise<string> {
             report += '\n```\n\n';
         }
 
+        if (analysis.validationErrors.length > 0) {
+            report += `### 📋 Validation Errors\n\n`;
+            report += '```\n';
+            report += analysis.validationErrors.slice(0, 5).join('\n');
+            if (analysis.validationErrors.length > 5) {
+                report += `\n... and ${analysis.validationErrors.length - 5} more validation error(s)\n`;
+            }
+            report += '\n```\n\n';
+        }
+
         // Add root cause suggestion
         report += `### 💡 Root Cause Analysis\n\n`;
         if (analysis.exceptions.length > 0) {
@@ -214,6 +235,12 @@ export async function analyzeLogsLocally(logsFolder: string): Promise<string> {
             report += `- Flow element configurations\n`;
             report += `- Variable assignments and null checks\n`;
             report += `- Record lookups and data availability\n\n`;
+        }
+        if (analysis.validationErrors.length > 0) {
+            report += `Validation rule(s) blocked the operation. Check:\n`;
+            report += `- The validation rule formula and error message\n`;
+            report += `- Required fields or conditions before the action\n`;
+            report += `- Case/Object Manager > Validation Rules in Setup\n\n`;
         }
 
         report += `### 🔗 Recommended Actions\n\n`;

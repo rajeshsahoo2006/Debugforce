@@ -11,6 +11,13 @@ interface AnalysisResult {
     content: string;
 }
 
+interface LogDisplayEntry {
+    id: string;
+    filename: string;
+    sizeBytes: number;
+    createdAt: string; // ISO string from Salesforce StartTime
+}
+
 export class DebugforceWebviewPanel {
     private static currentPanel: DebugforceWebviewPanel | undefined;
     private readonly _panel: vscode.WebviewPanel;
@@ -39,87 +46,6 @@ export class DebugforceWebviewPanel {
                     case 'fetchLogs':
                         await vscode.commands.executeCommand('debugforce.fetchLogs');
                         setTimeout(() => this._update(), 1000);
-                        break;
-                    case 'downloadLog':
-                        if (message.logId) {
-                            const logs = this.logTreeProvider.getLogs();
-                            const logEntry = logs.find(log => log.id === message.logId);
-                            if (logEntry) {
-                                const logItem = new LogTreeItem(logEntry, vscode.TreeItemCollapsibleState.None);
-                                await vscode.commands.executeCommand('debugforce.downloadLog', logItem);
-                            }
-                        }
-                        break;
-                    case 'analyzeLogs':
-                        if (message.logIds && Array.isArray(message.logIds)) {
-                            this.analysisResults = []; // Clear previous results
-                            const logs = this.logTreeProvider.getLogs();
-                            const { generateAnalysisContent, generateAnalysisPacket } = await import('./markdown');
-                            const { getCurrentUser } = await import('./userContext');
-                            const { downloadLog } = await import('./logDownload');
-                            const { downloadRawLog } = await import('./rawLogDownload');
-                            const debugforceConfig = vscode.workspace.getConfiguration('debugforce');
-                            const timeWindowMinutes = debugforceConfig.get<number>('timeWindowMinutes', 30);
-                            const truncateRawLogBytes = debugforceConfig.get<number>('truncateRawLogBytes', 1500000);
-                            const outputFolder = debugforceConfig.get<string>('outputFolder', '.debugforce/analysis');
-                            
-                            const userInfo = await getCurrentUser();
-                            
-                            for (const logId of message.logIds) {
-                                const logEntry = logs.find(log => log.id === logId);
-                                if (logEntry) {
-                                    try {
-                                        const logContent = await downloadLog(logId, userInfo.orgAlias);
-                                        try {
-                                            await downloadRawLog(logId, userInfo.orgAlias, '.debugforce/logs');
-                                        } catch (rawLogError) {
-                                            console.error(`Failed to save raw log file: ${rawLogError}`);
-                                        }
-                                        
-                                        const analysisContent = generateAnalysisContent({
-                                            userInfo,
-                                            logId,
-                                            timeWindowMinutes,
-                                            logContent,
-                                            outputFolder: '',
-                                            truncateRawLogBytes
-                                        });
-                                        
-                                        this.analysisResults.push({
-                                            logId: logEntry.id,
-                                            operation: logEntry.operation,
-                                            timestamp: new Date().toISOString(),
-                                            content: analysisContent
-                                        });
-                                        
-                                        try {
-                                            await generateAnalysisPacket({
-                                                userInfo,
-                                                logId,
-                                                timeWindowMinutes,
-                                                logContent,
-                                                outputFolder,
-                                                truncateRawLogBytes
-                                            });
-                                        } catch (fileError) {
-                                            console.error(`Failed to save analysis file: ${fileError}`);
-                                        }
-                                    } catch (error) {
-                                        const errorMsg = error instanceof Error ? error.message : String(error);
-                                        this.analysisResults.push({
-                                            logId: logEntry.id,
-                                            operation: logEntry.operation,
-                                            timestamp: new Date().toISOString(),
-                                            content: `# Error Analyzing Log ${logEntry.id}\n\nError: ${errorMsg}`
-                                        });
-                                    }
-                                }
-                            }
-                            this._update();
-                            vscode.window.showInformationMessage(
-                                `Debugforce: Analyzed ${this.analysisResults.length} log(s). Results displayed in control panel.`
-                            );
-                        }
                         break;
                     case 'analyzeWithAgentforce':
                         await vscode.commands.executeCommand('debugforce.analyzeWithAgentforce');
@@ -168,68 +94,60 @@ export class DebugforceWebviewPanel {
 
     private async _update() {
         const allLogs = this.logTreeProvider.getLogs();
-        const logs = await this._filterToLogsInFolder(allLogs);
+        const logEntries = await this._getLogsFromFolder(allLogs);
         const webview = this._panel.webview;
-        this._panel.webview.html = this._getHtmlForWebview(webview, logs, this.analysisResults);
+        this._panel.webview.html = this._getHtmlForWebview(webview, logEntries, this.analysisResults);
     }
 
-    /** Returns only logs that have a corresponding .log file in the logs folder */
-    private async _filterToLogsInFolder(allLogs: ApexLogEntry[]): Promise<ApexLogEntry[]> {
+    /** Returns log entries with file info (name, size, created time) for files in the logs folder */
+    private async _getLogsFromFolder(allLogs: ApexLogEntry[]): Promise<LogDisplayEntry[]> {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
-            return allLogs;
+            return [];
         }
         const config = vscode.workspace.getConfiguration('debugforce');
         const rawLogsFolder = config.get<string>('rawLogsFolder', '.debugforce/logs');
         const logsDir = path.join(workspaceFolders[0].uri.fsPath, rawLogsFolder);
+        const logMeta = new Map<string, ApexLogEntry>(allLogs.map(l => [l.id, l]));
         try {
             const files = await fs.promises.readdir(logsDir);
-            const logIdsInFolder = new Set(
-                files.filter((f: string) => f.endsWith('.log')).map((f: string) => f.replace(/\.log$/, ''))
-            );
-            return allLogs.filter(log => logIdsInFolder.has(log.id));
+            const logFiles = files.filter((f: string) => f.endsWith('.log')).sort();
+            const entries: LogDisplayEntry[] = [];
+            for (const file of logFiles) {
+                const logId = file.replace(/\.log$/, '');
+                const filePath = path.join(logsDir, file);
+                const stat = await fs.promises.stat(filePath);
+                const meta = logMeta.get(logId);
+                entries.push({
+                    id: logId,
+                    filename: file,
+                    sizeBytes: stat.size,
+                    createdAt: meta?.startTime || new Date(stat.mtime).toISOString()
+                });
+            }
+            return entries;
         } catch {
-            return allLogs;
+            return [];
         }
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview, logs: ApexLogEntry[], analysisResults: AnalysisResult[]): string {
+    private _getHtmlForWebview(webview: vscode.Webview, logs: LogDisplayEntry[], analysisResults: AnalysisResult[]): string {
         const logsHtml = logs.length > 0
             ? `
                 <div class="logs-header">
                     <h2>📋 Available Logs (${logs.length})</h2>
-                    <div class="selection-info">
-                        <span id="selectedCount">0</span> selected
-                        <button class="btn-text" onclick="toggleSelectAll()">Select All</button>
-                        <button class="btn-text" onclick="clearSelection()">Clear</button>
-                    </div>
                 </div>
-                <div class="logs-list">
-                    ${logs.map((log, index) => `
-                        <div class="log-entry" data-log-id="${log.id}">
-                            <label class="log-checkbox-label">
-                                <input type="checkbox" class="log-checkbox" value="${log.id}" onchange="updateSelection()">
-                                <div class="log-content">
-                                    <div class="log-row">
-                                        <span class="log-index">#${index + 1}</span>
-                                        <strong class="log-op">${log.operation}</strong>
-                                        <span class="log-size">${this._formatBytes(log.logLength)}</span>
-                                    </div>
-                                    <div class="log-meta">
-                                        <span>🕒 ${this._formatTime(log.startTime)}</span>
-                                        <span>⏱️ ${this._formatDuration(log.durationMilliseconds)}</span>
-                                        <span class="log-id-mono">${log.id}</span>
-                                    </div>
-                                </div>
-                            </label>
+                <div class="logs-list logs-list-simple">
+                    ${logs.map((log) => `
+                        <div class="log-entry-simple">
+                            <span class="log-name">${this._escapeHtml(log.filename)}</span>
+                            <span class="log-size">${this._formatBytes(log.sizeBytes)}</span>
+                            <span class="log-time">${this._formatLogTime(log.createdAt)}</span>
                         </div>
                     `).join('')}
                 </div>
                 <div class="actions-bar">
-                    <button class="btn-primary" id="btnAnalyze" onclick="analyzeSelectedLogs()" disabled>
-                        ✨ Analyze Selected Logs (Local)
-                    </button>
-                    <button class="btn-secondary" onclick="analyzeWithAgentforce()" style="margin-top: 8px;">
+                    <button class="btn-secondary" onclick="analyzeWithAgentforce()">
                         🔍 Analyze All Logs
                     </button>
                 </div>
@@ -380,59 +298,40 @@ export class DebugforceWebviewPanel {
                         padding-right: 4px;
                     }
 
-                    .log-entry {
-                        background: rgba(0, 0, 0, 0.2);
-                        border: 1px solid transparent;
-                        border-radius: 8px;
-                        transition: all 0.2s;
-                    }
-
-                    .log-entry:hover {
-                        background: rgba(255, 255, 255, 0.05);
-                    }
-
-                    .log-entry.selected {
-                        border-color: var(--primary-color);
-                        background: rgba(76, 175, 80, 0.1);
-                    }
-
-                    .log-checkbox-label {
-                        display: flex;
-                        padding: 12px;
-                        cursor: pointer;
-                        width: 100%;
-                    }
-
-                    .log-content {
-                        flex: 1;
+                    .logs-list-simple {
                         display: flex;
                         flex-direction: column;
-                        gap: 4px;
+                        gap: 8px;
                     }
 
-                    .log-row {
+                    .log-entry-simple {
                         display: flex;
                         justify-content: space-between;
                         align-items: center;
+                        padding: 10px 12px;
+                        background: rgba(0, 0, 0, 0.2);
+                        border-radius: 6px;
+                        font-size: 0.9rem;
                     }
 
-                    .log-meta {
-                        display: flex;
-                        gap: 12px;
-                        font-size: 0.85rem;
-                        color: var(--vscode-descriptionForeground);
-                    }
-                    
-                    .log-id-mono {
+                    .log-entry-simple .log-name {
                         font-family: monospace;
-                        opacity: 0.7;
+                        flex: 1;
+                        min-width: 0;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
                     }
 
-                    .log-size {
-                        background: rgba(255,255,255,0.1);
-                        padding: 2px 6px;
-                        border-radius: 4px;
-                        font-size: 0.8rem;
+                    .log-entry-simple .log-size {
+                        margin: 0 16px;
+                        color: var(--vscode-descriptionForeground);
+                        font-size: 0.85rem;
+                    }
+
+                    .log-entry-simple .log-time {
+                        color: var(--vscode-descriptionForeground);
+                        font-size: 0.85rem;
+                        white-space: nowrap;
                     }
 
                     /* Analysis Results */
@@ -551,7 +450,6 @@ export class DebugforceWebviewPanel {
 
                 <script>
                     const vscode = acquireVsCodeApi();
-                    let selectedLogs = new Set();
 
                     function setupDebugLogging() {
                         vscode.postMessage({ command: 'setupDebugLogging' });
@@ -559,55 +457,6 @@ export class DebugforceWebviewPanel {
                     
                     function fetchLogs() {
                         vscode.postMessage({ command: 'fetchLogs' });
-                    }
-                    
-                    function updateSelection() {
-                        const checkboxes = document.querySelectorAll('.log-checkbox:checked');
-                        selectedLogs = new Set(Array.from(checkboxes).map(cb => cb.value));
-                        document.getElementById('selectedCount').textContent = selectedLogs.size;
-                        
-                        const btnAnalyze = document.getElementById('btnAnalyze');
-                        if (btnAnalyze) {
-                            btnAnalyze.disabled = selectedLogs.size === 0;
-                            btnAnalyze.innerHTML = selectedLogs.size > 0 
-                                ? '✨ Analyze ' + selectedLogs.size + ' Log(s)' 
-                                : '✨ Analyze Selected Logs';
-                        }
-                        
-                        document.querySelectorAll('.log-entry').forEach(entry => {
-                            const logId = entry.dataset.logId;
-                            if (selectedLogs.has(logId)) {
-                                entry.classList.add('selected');
-                            } else {
-                                entry.classList.remove('selected');
-                            }
-                        });
-                    }
-                    
-                    function toggleSelectAll() {
-                        const checkboxes = document.querySelectorAll('.log-checkbox');
-                        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-                        checkboxes.forEach(cb => cb.checked = !allChecked);
-                        updateSelection();
-                    }
-                    
-                    function clearSelection() {
-                        document.querySelectorAll('.log-checkbox').forEach(cb => cb.checked = false);
-                        updateSelection();
-                    }
-                    
-                    function analyzeSelectedLogs() {
-                        if (selectedLogs.size === 0) return;
-                        
-                        const btn = document.getElementById('btnAnalyze');
-                        const originalText = btn.innerHTML;
-                        btn.disabled = true;
-                        btn.innerHTML = '⏳ Analyzing...';
-                        
-                        const logIds = Array.from(selectedLogs);
-                        vscode.postMessage({ command: 'analyzeLogs', logIds: logIds });
-                        
-                        // We rely on the extension to reload the view with results
                     }
                     
                     function analyzeWithAgentforce() {
@@ -618,19 +467,24 @@ export class DebugforceWebviewPanel {
             </html>`;
     }
 
-    private _formatTime(isoString: string): string {
-        if (!isoString) return 'Unknown';
+    private _formatLogTime(isoString: string): string {
+        if (!isoString) return '—';
         try {
             const date = new Date(isoString);
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return date.toLocaleString([], {
+                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
         } catch {
             return isoString;
         }
     }
 
-    private _formatDuration(ms: number): string {
-        if (ms < 1000) return `${ms}ms`;
-        return `${(ms / 1000).toFixed(2)}s`;
+    private _escapeHtml(text: string): string {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
     }
 
     private _formatBytes(bytes: number): string {

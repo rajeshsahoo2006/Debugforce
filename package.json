@@ -53,6 +53,10 @@
       {
         "command": "debugforce.analyzeWithAgentforce",
         "title": "Debugforce: Analyze All Logs"
+      },
+      {
+        "command": "debugforce.openLogForAI",
+        "title": "Debugforce: Open Log for AI Analysis"
       }
     ],
     "views": {
@@ -115,6 +119,11 @@
       "view/item/context": [
         {
           "command": "debugforce.downloadLog",
+          "when": "view == debugforceLogs",
+          "group": "inline"
+        },
+        {
+          "command": "debugforce.openLogForAI",
           "when": "view == debugforceLogs",
           "group": "inline"
         }
